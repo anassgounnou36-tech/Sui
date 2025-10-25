@@ -16,6 +16,7 @@ let lastSpreadDirection: ArbDirection | null = null;
 let totalProfitUsdc = 0;
 let totalExecutions = 0;
 let successfulExecutions = 0;
+let consecutiveFailures = 0; // Kill switch counter
 
 /**
  * Calculate spread percentage between two prices
@@ -131,6 +132,7 @@ async function monitoringLoop() {
 
     if (result.success) {
       successfulExecutions++;
+      consecutiveFailures = 0; // Reset on success
       const profitUsdc = result.profit ? smallestUnitToUsdc(result.profit) : 0;
       totalProfitUsdc += profitUsdc;
 
@@ -143,11 +145,45 @@ async function monitoringLoop() {
         `Total P&L: ${totalProfitUsdc.toFixed(6)} USDC (${successfulExecutions}/${totalExecutions} successful)`
       );
 
+      // Log trade event as JSON
+      logger.tradeEvent({
+        timestamp: new Date().toISOString(),
+        direction,
+        size: flashloanAmount.toString(),
+        minOut: minProfit.toString(),
+        provider: 'suilend', // TODO: Track actual provider used
+        repayAmount: flashloanAmount.toString(),
+        realizedProfit: result.profit?.toString(),
+        txDigest: result.txDigest,
+        status: 'success',
+      });
+
       // Reset consecutive count after successful execution
       consecutiveSpreadCount = 0;
       lastSpreadDirection = null;
     } else {
+      consecutiveFailures++;
       logger.error(`✗ Arbitrage failed: ${result.error}`);
+
+      // Log failed trade event
+      logger.tradeEvent({
+        timestamp: new Date().toISOString(),
+        direction,
+        size: flashloanAmount.toString(),
+        minOut: minProfit.toString(),
+        provider: 'suilend',
+        repayAmount: flashloanAmount.toString(),
+        status: 'failed',
+        error: result.error,
+      });
+
+      // Kill switch: Stop if too many consecutive failures
+      if (consecutiveFailures >= config.maxConsecutiveFailures) {
+        logger.error(
+          `KILL SWITCH ACTIVATED: ${consecutiveFailures} consecutive failures. Shutting down.`
+        );
+        process.exit(1);
+      }
     }
   } catch (error) {
     logger.error('Error in monitoring loop', error);

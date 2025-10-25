@@ -130,6 +130,29 @@ class Logger {
     console.log(formatted);
     this.writeToFile(formatted);
   }
+
+  /**
+   * Log trade event as JSON line for structured logging
+   */
+  tradeEvent(event: {
+    timestamp: string;
+    direction: string;
+    size: string;
+    cetusQuote?: string;
+    turbosQuote?: string;
+    minOut: string;
+    provider: string;
+    repayAmount: string;
+    realizedProfit?: string;
+    txDigest?: string;
+    status: 'success' | 'failed';
+    error?: string;
+  }): void {
+    const jsonLine = JSON.stringify(event);
+    const formatted = this.formatMessage('TRADE', jsonLine);
+    console.log(formatted);
+    this.writeToFile(formatted);
+  }
 }
 
 export const logger = new Logger();

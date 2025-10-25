@@ -11,7 +11,8 @@
     "dry-run": "DRY_RUN=true node dist/src/index.js",
     "test": "echo \"Placeholder: No tests yet\" && exit 0",
     "typecheck": "tsc --noEmit",
-    "spread": "node dist/scripts/print-spread.js"
+    "spread": "node dist/scripts/print-spread.js",
+    "simulate": "node dist/scripts/simulate.js"
   },
   "keywords": [
     "sui",
