@@ -10,6 +10,26 @@ import { COIN_TYPES } from './addresses';
 import Decimal from 'decimal.js';
 
 /**
+ * Target fee tier for arbitrage pools (0.05% = 500 basis points)
+ */
+const TARGET_FEE_TIER = 500;
+
+/**
+ * Sui object ID format validation regex
+ * Sui object IDs are 32-byte hex strings, often prefixed with 0x
+ */
+const SUI_OBJECT_ID_REGEX = /^0x[0-9a-fA-F]{64}$/;
+
+/**
+ * Validate Sui object ID format
+ * @param id The object ID to validate
+ * @returns true if valid, false otherwise
+ */
+function isValidSuiObjectId(id: string): boolean {
+  return SUI_OBJECT_ID_REGEX.test(id);
+}
+
+/**
  * Resolved pool and market information with full metadata
  */
 export interface PoolMetadata {
@@ -159,7 +179,7 @@ async function verifyAndExtractPoolMetadata(
     poolId,
     coinTypeA,
     coinTypeB,
-    feeTier: 500, // 0.05%
+    feeTier: TARGET_FEE_TIER,
     currentSqrtPrice: currentSqrtPrice?.toString(),
     liquidity: liquidity?.toString(),
   };
@@ -186,6 +206,14 @@ async function resolveCetusPool(client: SuiClient): Promise<{
     
     if (manualPoolId) {
       logger.info(`Using manual Cetus pool override: ${manualPoolId}`);
+      
+      // Validate pool ID format
+      if (!isValidSuiObjectId(manualPoolId)) {
+        throw new Error(
+          `Invalid Cetus pool ID format: ${manualPoolId}. ` +
+          `Expected 0x followed by 64 hexadecimal characters.`
+        );
+      }
       
       const poolMetadata = await verifyAndExtractPoolMetadata(
         client,
@@ -250,6 +278,14 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
     
     if (manualPoolId) {
       logger.info(`Using manual Turbos pool override: ${manualPoolId}`);
+      
+      // Validate pool ID format
+      if (!isValidSuiObjectId(manualPoolId)) {
+        throw new Error(
+          `Invalid Turbos pool ID format: ${manualPoolId}. ` +
+          `Expected 0x followed by 64 hexadecimal characters.`
+        );
+      }
       
       const poolMetadata = await verifyAndExtractPoolMetadata(
         client,
