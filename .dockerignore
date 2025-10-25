@@ -1,0 +1,41 @@
+# Docker-specific ignores
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Development files
+.git
+.github
+.gitignore
+.env.example
+README.md
+LICENSE
+
+# Node modules (will be installed in container)
+node_modules
+
+# Build artifacts (will be built in container)
+dist
+
+# Logs (will be created in container)
+logs
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage
+*.test.ts
+test
+
+# Temporary files
+tmp
+temp
+*.tmp

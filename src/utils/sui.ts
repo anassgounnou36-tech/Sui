@@ -2,21 +2,80 @@ import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { fromB64 } from '@mysten/sui/utils';
-import { config } from '../config';
+import { config, normalizePrivateKey } from '../config';
 import { logger } from '../logger';
 
 let suiClient: SuiClient | null = null;
 let keypair: Ed25519Keypair | null = null;
+let currentRpcUrl: string = '';
+let rpcEndpoints: string[] = [];
 
 /**
- * Initialize the Sui RPC client
+ * Initialize the Sui RPC client with failover support
  */
-export function initializeRpcClient(rpcUrl: string): SuiClient {
+export function initializeRpcClient(
+  primaryUrl?: string,
+  backupUrl?: string,
+  fallbackUrl?: string
+): SuiClient {
   if (!suiClient) {
-    suiClient = new SuiClient({ url: rpcUrl });
-    logger.info(`Initialized Sui RPC client: ${rpcUrl}`);
+    // Build list of RPC endpoints
+    if (primaryUrl || config.rpcEndpoints.primary) {
+      rpcEndpoints = [
+        primaryUrl || config.rpcEndpoints.primary,
+        backupUrl || config.rpcEndpoints.backup,
+        fallbackUrl || config.rpcEndpoints.fallback,
+      ].filter((url) => url && url.length > 0);
+    } else {
+      // Fallback to legacy single URL
+      rpcEndpoints = [config.rpcUrl];
+    }
+
+    // Try to connect to first available endpoint
+    let connected = false;
+    for (const url of rpcEndpoints) {
+      try {
+        suiClient = new SuiClient({ url });
+        currentRpcUrl = url;
+        logger.info(`Initialized Sui RPC client: ${url}`);
+        connected = true;
+        break;
+      } catch (error) {
+        logger.warn(`Failed to connect to ${url}, trying next...`, error);
+      }
+    }
+
+    if (!connected || !suiClient) {
+      throw new Error('Failed to connect to any RPC endpoint');
+    }
   }
   return suiClient;
+}
+
+/**
+ * Failover to next RPC endpoint if current one fails
+ */
+async function failoverRpc(): Promise<SuiClient> {
+  const currentIndex = rpcEndpoints.indexOf(currentRpcUrl);
+  const nextIndex = (currentIndex + 1) % rpcEndpoints.length;
+
+  if (nextIndex === currentIndex) {
+    throw new Error('No alternative RPC endpoints available');
+  }
+
+  const nextUrl = rpcEndpoints[nextIndex];
+  logger.warn(`Failing over from ${currentRpcUrl} to ${nextUrl}`);
+
+  try {
+    const newClient = new SuiClient({ url: nextUrl });
+    suiClient = newClient;
+    currentRpcUrl = nextUrl;
+    logger.info(`Successfully connected to backup RPC: ${nextUrl}`);
+    return newClient;
+  } catch (error) {
+    logger.error(`Failed to connect to ${nextUrl}`, error);
+    throw error;
+  }
 }
 
 /**
@@ -30,15 +89,18 @@ export function getSuiClient(): SuiClient {
 }
 
 /**
- * Initialize keypair from private key
+ * Initialize keypair from private key (supports hex with/without 0x and base64)
  */
 export function initializeKeypair(privateKey: string): Ed25519Keypair {
   if (!keypair) {
     try {
+      // Normalize the private key format
+      const normalizedKey = normalizePrivateKey(privateKey);
+
       // Handle both base64 and hex formats
-      const secretKey = privateKey.startsWith('0x')
-        ? Uint8Array.from(Buffer.from(privateKey.slice(2), 'hex'))
-        : fromB64(privateKey);
+      const secretKey = normalizedKey.startsWith('0x')
+        ? Uint8Array.from(Buffer.from(normalizedKey.slice(2), 'hex'))
+        : fromB64(normalizedKey);
       keypair = Ed25519Keypair.fromSecretKey(secretKey);
       logger.info('Keypair initialized successfully');
     } catch (error) {
@@ -60,7 +122,7 @@ export function getKeypair(): Ed25519Keypair {
 }
 
 /**
- * Sign and execute a transaction with exponential backoff and finality polling
+ * Sign and execute a transaction with exponential backoff, finality polling, and RPC failover
  */
 export async function signAndExecuteTransaction(
   tx: Transaction,
@@ -68,11 +130,17 @@ export async function signAndExecuteTransaction(
     maxRetries?: number;
     initialDelayMs?: number;
     pollIntervalMs?: number;
+    maxPollWaitMs?: number;
   } = {}
 ): Promise<{ digest: string; effects: any }> {
-  const { maxRetries = 3, initialDelayMs = 1000, pollIntervalMs = 500 } = options;
+  const {
+    maxRetries = 3,
+    initialDelayMs = 1000,
+    pollIntervalMs = config.finalityPollIntervalMs,
+    maxPollWaitMs = config.finalityMaxWaitMs,
+  } = options;
 
-  const client = getSuiClient();
+  let client = getSuiClient();
   const kp = getKeypair();
 
   let lastError: Error | null = null;
@@ -99,10 +167,9 @@ export async function signAndExecuteTransaction(
       const digest = result.digest;
       logger.info(`Transaction submitted: ${digest}`);
 
-      // Wait for finality
-      const finalTx = result;
+      // Wait for finality with timeout
       let pollAttempts = 0;
-      const maxPollAttempts = 20; // 10 seconds max
+      const maxPollAttempts = Math.floor(maxPollWaitMs / pollIntervalMs);
 
       while (pollAttempts < maxPollAttempts) {
         const txResponse = await client.getTransactionBlock({
@@ -130,14 +197,30 @@ export async function signAndExecuteTransaction(
       }
 
       // If we got here, we have a result but didn't confirm finality
-      logger.warn(`Transaction submitted but finality not confirmed: ${digest}`);
+      logger.warn(`Transaction submitted but finality not confirmed within ${maxPollWaitMs}ms: ${digest}`);
       return {
         digest,
-        effects: finalTx.effects,
+        effects: result.effects,
       };
     } catch (error) {
       lastError = error as Error;
       logger.error(`Transaction attempt ${attempt + 1} failed`, error);
+
+      // Try failover if this looks like an RPC issue
+      if (
+        attempt < maxRetries - 1 &&
+        (error instanceof Error &&
+          (error.message.includes('network') ||
+            error.message.includes('timeout') ||
+            error.message.includes('connection')))
+      ) {
+        try {
+          client = await failoverRpc();
+          logger.info('RPC failover successful, retrying transaction');
+        } catch (failoverError) {
+          logger.error('RPC failover failed', failoverError);
+        }
+      }
 
       if (attempt === maxRetries - 1) {
         throw lastError;

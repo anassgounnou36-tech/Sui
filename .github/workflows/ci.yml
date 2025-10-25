@@ -67,3 +67,37 @@ jobs:
 
     - name: Run tests (placeholder)
       run: npm test
+
+    - name: Test simulate script
+      run: |
+        timeout 60s npm run simulate || exit_code=$?
+        # Simulate should complete successfully
+        if [ $exit_code -eq 0 ]; then
+          echo "Simulate test passed"
+          exit 0
+        else
+          echo "Simulate test failed with exit code $exit_code"
+          exit 1
+        fi
+      env:
+        DRY_RUN: true
+        VERIFY_ON_CHAIN: false
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      run: |
+        docker build -t sui-arbitrage-bot:test .
+        
+    - name: Test Docker image
+      run: |
+        docker run --rm sui-arbitrage-bot:test node -e "console.log('Docker image works')"

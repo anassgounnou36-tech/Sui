@@ -32,8 +32,20 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
 
 // Configuration constants
 export const config = {
-  // RPC Configuration
-  rpcUrl: getEnvString('SUI_RPC_MAINNET', 'https://fullnode.mainnet.sui.io:443'),
+  // Multi-RPC Configuration with failover
+  rpcEndpoints: {
+    primary: getEnvString(
+      'SUI_RPC_MAINNET_PRIMARY',
+      'https://sui-mainnet.public.blastapi.io'
+    ),
+    backup: getEnvString('SUI_RPC_MAINNET_BACKUP', 'https://1rpc.io/sui'),
+    fallback: getEnvString(
+      'SUI_RPC_MAINNET_FALLBACK',
+      'https://sui.rpc.grove.city/v1/01fdb492'
+    ),
+  },
+  // Legacy single RPC URL (for backward compatibility)
+  rpcUrl: getEnvString('SUI_RPC_MAINNET', 'https://sui-mainnet.public.blastapi.io'),
 
   // Wallet Configuration
   privateKey: getEnvString('PRIVATE_KEY', ''),
@@ -41,17 +53,25 @@ export const config = {
 
   // Flashloan Configuration
   flashloanAmount: getEnvNumber('FLASHLOAN_AMOUNT', 10_000_000), // 10 USDC (6 decimals)
+  maxFlashloanUsdc: getEnvNumber('MAX_FLASHLOAN_USDC', 5_000_000), // 5M USDC max
+
+  // Safety confirmation for large amounts
+  liveConfirm: getEnvBoolean('LIVE_CONFIRM', false),
 
   // Profit and Spread Thresholds
   minProfitUsdc: getEnvNumber('MIN_PROFIT_USDC', 0.1),
   minSpreadPercent: getEnvNumber('MIN_SPREAD_PERCENT', 0.5),
+  consecutiveSpreadRequired: getEnvNumber('CONSECUTIVE_SPREAD_REQUIRED', 2),
 
   // Risk Management
   maxSlippagePercent: getEnvNumber('MAX_SLIPPAGE_PERCENT', 1.0),
   gasBudget: getEnvNumber('GAS_BUDGET', 100_000),
+  maxConsecutiveFailures: getEnvNumber('MAX_CONSECUTIVE_FAILURES', 3),
 
   // Monitoring
   checkIntervalMs: getEnvNumber('CHECK_INTERVAL_MS', 5_000),
+  finalityPollIntervalMs: getEnvNumber('FINALITY_POLL_INTERVAL_MS', 500),
+  finalityMaxWaitMs: getEnvNumber('FINALITY_MAX_WAIT_MS', 10_000),
 
   // Verification
   verifyOnChain: getEnvBoolean('VERIFY_ON_CHAIN', true),
@@ -101,11 +121,48 @@ export function validateConfig(): void {
     console.warn('Warning: FLASHLOAN_AMOUNT is very low (<1 USDC)');
   }
 
+  // Safety check for large flashloan amounts
+  const flashloanUsdcAmount = config.flashloanAmount / 1_000_000; // Convert to USDC
+  const largeAmountThreshold = 100_000; // 100k USDC
+
+  if (flashloanUsdcAmount > largeAmountThreshold && !config.liveConfirm) {
+    throw new Error(
+      `FLASHLOAN_AMOUNT exceeds ${largeAmountThreshold} USDC (${flashloanUsdcAmount.toFixed(2)} USDC). ` +
+        `Set LIVE_CONFIRM=true to proceed with large amounts.`
+    );
+  }
+
+  // Validate max flashloan limit
+  if (config.flashloanAmount > config.maxFlashloanUsdc * 1_000_000) {
+    throw new Error(
+      `FLASHLOAN_AMOUNT (${flashloanUsdcAmount.toFixed(2)} USDC) exceeds ` +
+        `MAX_FLASHLOAN_USDC limit (${config.maxFlashloanUsdc} USDC)`
+    );
+  }
+
   // Ensure logs directory exists
   const logsDir = resolve(process.cwd(), 'logs');
   if (!existsSync(logsDir)) {
     throw new Error('Logs directory does not exist. Please create it: mkdir logs');
   }
+}
+
+/**
+ * Normalize private key format (support hex with/without 0x and base64)
+ */
+export function normalizePrivateKey(privateKey: string): string {
+  // If it starts with 0x, assume hex
+  if (privateKey.startsWith('0x') || privateKey.startsWith('0X')) {
+    return privateKey;
+  }
+
+  // Check if it looks like hex (64 chars, all hex digits)
+  if (/^[0-9a-fA-F]{64}$/.test(privateKey)) {
+    return '0x' + privateKey;
+  }
+
+  // Otherwise assume base64
+  return privateKey;
 }
 
 // Constants for calculations
