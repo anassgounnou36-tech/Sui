@@ -1,7 +1,8 @@
 import { config } from '../src/config';
-import { initializeRpcClient } from '../src/utils/sui';
-import { getCetusPrice, getCetusPoolInfo } from '../src/cetus';
-import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbos';
+import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
+import { resolvePoolAddresses } from '../src/poolResolver';
+import { getCetusPrice, getCetusPoolInfo } from '../src/cetusIntegration';
+import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbosIntegration';
 
 /**
  * Calculate spread percentage between two prices
@@ -11,19 +12,30 @@ function calculateSpread(price1: number, price2: number): number {
 }
 
 /**
- * Print current price spreads
+ * Print current price spreads with real SDK quotes
  */
 async function printSpread() {
   console.log('=== Sui DEX Price Spread Checker ===\n');
 
   try {
-    // Initialize (minimal config needed)
+    // Initialize RPC client
     console.log('Initializing...');
-    initializeRpcClient(config.rpcUrl);
+    initializeRpcClient(
+      config.rpcEndpoints.primary,
+      config.rpcEndpoints.backup,
+      config.rpcEndpoints.fallback
+    );
+
+    const client = getSuiClient();
+
+    // Resolve pool addresses
+    console.log('Resolving pool addresses...');
+    await resolvePoolAddresses(client);
+    console.log();
 
     console.log('Fetching prices from Cetus and Turbos...\n');
 
-    // Fetch prices
+    // Fetch prices using real SDKs
     const [cetusPrice, turbosPrice] = await Promise.all([getCetusPrice(), getTurbosPrice()]);
 
     // Display prices
@@ -42,7 +54,7 @@ async function printSpread() {
     console.log(`  Direction: ${spreadDirection} (buy cheaper, sell higher)`);
     console.log();
 
-    // Profitability analysis
+    // Profitability analysis with real flashloan size
     const minSpread = config.minSpreadPercent;
     const isProfitable = spread >= minSpread;
 
@@ -53,7 +65,7 @@ async function printSpread() {
     console.log();
 
     if (isProfitable) {
-      console.log('Estimated Arbitrage:');
+      console.log('Estimated Arbitrage (at configured flashloan size):');
       const flashloanAmount = config.flashloanAmount / 1e6; // Convert to USDC
       const estimatedGross = (flashloanAmount * spread) / 100;
       const flashloanFee = flashloanAmount * (config.suilendFeePercent / 100);
@@ -62,7 +74,7 @@ async function printSpread() {
 
       console.log(`  Flashloan Size: ${flashloanAmount.toFixed(2)} USDC`);
       console.log(`  Gross Profit: ${estimatedGross.toFixed(6)} USDC`);
-      console.log(`  Flashloan Fee: ${flashloanFee.toFixed(6)} USDC`);
+      console.log(`  Flashloan Fee (${config.suilendFeePercent}%): ${flashloanFee.toFixed(6)} USDC`);
       console.log(`  Swap Fees: ${swapFees.toFixed(6)} USDC`);
       console.log(`  Net Profit: ${estimatedNet.toFixed(6)} USDC`);
       console.log();

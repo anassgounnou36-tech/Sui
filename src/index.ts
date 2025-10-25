@@ -2,8 +2,9 @@ import { config, validateConfig, smallestUnitToUsdc, usdcToSmallestUnit } from '
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
 import { runStartupVerification } from './verify';
-import { getCetusPrice } from './cetus';
-import { getTurbosPrice } from './turbos';
+import { resolvePoolAddresses } from './poolResolver';
+import { getCetusPrice } from './cetusIntegration';
+import { getTurbosPrice } from './turbosIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';
 import { COIN_TYPES } from './addresses';
 
@@ -171,11 +172,15 @@ async function main() {
 
     // Initialize Sui client with multi-RPC failover
     logger.info('Initializing Sui RPC client with failover...');
-    initializeRpcClient(
+    const client = initializeRpcClient(
       config.rpcEndpoints.primary,
       config.rpcEndpoints.backup,
       config.rpcEndpoints.fallback
     );
+
+    // Resolve pool addresses dynamically
+    logger.info('Resolving pool addresses...');
+    await resolvePoolAddresses(client);
 
     // Initialize keypair (skip if dry run)
     if (!config.dryRun) {
