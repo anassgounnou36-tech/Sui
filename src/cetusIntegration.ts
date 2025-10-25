@@ -7,7 +7,7 @@ import { getSuiClient } from './utils/sui';
 import { logger } from './logger';
 import { CETUS, COIN_TYPES } from './addresses';
 import { config } from './config';
-import { getResolvedAddresses } from './poolResolver';
+import { getResolvedAddresses, calculatePriceFromSqrtPrice, validatePrice } from './resolve';
 import { Transaction } from '@mysten/sui/transactions';
 import Decimal from 'decimal.js';
 
@@ -49,7 +49,7 @@ export async function getCetusPrice(): Promise<number> {
 
     // Fetch pool object
     const poolObject = await client.getObject({
-      id: resolved.cetus.suiUsdcPoolId,
+      id: resolved.cetus.suiUsdcPool.poolId,
       options: {
         showContent: true,
       },
@@ -67,24 +67,41 @@ export async function getCetusPrice(): Promise<number> {
     const fields = content.fields;
 
     // Extract sqrt_price from pool state
-    // Price = (sqrtPrice / 2^64)^2 * (10^decimal_diff)
-    // For SUI/USDC: SUI has 9 decimals, USDC has 6 decimals
     const sqrtPriceStr = fields.current_sqrt_price || fields.sqrt_price;
     if (!sqrtPriceStr) {
       throw new Error('sqrtPrice not found in pool state');
     }
 
-    const sqrtPrice = new Decimal(sqrtPriceStr);
-    const Q64 = new Decimal(2).pow(64);
+    // Determine coin ordering from resolved metadata
+    const poolMeta = resolved.cetus.suiUsdcPool;
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
 
-    // Calculate price: (sqrtPrice / 2^64)^2
-    const priceRatio = sqrtPrice.div(Q64).pow(2);
+    // Calculate price based on coin ordering
+    // If SUI is coin A: price = USDC/SUI (we want this)
+    // If USDC is coin A: price = SUI/USDC (need to invert)
+    let price: number;
 
-    // Adjust for decimal difference (SUI=9, USDC=6, so multiply by 10^-3)
-    const decimalAdjustment = new Decimal(10).pow(6 - 9); // USDC decimals - SUI decimals
-    const price = priceRatio.mul(decimalAdjustment).toNumber();
+    if (suiIsCoinA) {
+      // Pool is SUI/USDC, price is in USDC per SUI (what we want)
+      price = calculatePriceFromSqrtPrice(sqrtPriceStr, 9, 6); // SUI decimals=9, USDC=6
+    } else {
+      // Pool is USDC/SUI, price is in SUI per USDC (need to invert)
+      const inversePrice = calculatePriceFromSqrtPrice(sqrtPriceStr, 6, 9);
+      price = 1 / inversePrice;
+    }
 
-    logger.debug(`Cetus price calculated: ${price.toFixed(6)} USDC/SUI (sqrtPrice: ${sqrtPriceStr})`);
+    // Sanity check the price
+    if (!validatePrice(price, 'Cetus')) {
+      throw new Error(
+        `Cetus price ${price.toFixed(6)} USDC/SUI failed sanity check. ` +
+          `Check pool configuration and coin ordering.`
+      );
+    }
+
+    logger.debug(
+      `Cetus price: ${price.toFixed(6)} USDC/SUI (sqrtPrice: ${sqrtPriceStr}, ` +
+        `SUI is ${suiIsCoinA ? 'A' : 'B'})`
+    );
 
     // Cache the price
     priceCache = { price, timestamp: Date.now() };
@@ -117,6 +134,11 @@ export async function quoteCetusSwapB2A(amountIn: bigint): Promise<QuoteResult> 
     // Get current price to estimate output
     const price = await getCetusPrice();
 
+    // Safety check: reject if price is implausible
+    if (!validatePrice(price, 'Cetus')) {
+      throw new Error(`Cetus price ${price} failed sanity check`);
+    }
+
     // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
     // Convert to proper decimals: USDC (6) -> SUI (9)
     const usdcAmount = new Decimal(amountIn.toString()).div(1e6);
@@ -127,19 +149,33 @@ export async function quoteCetusSwapB2A(amountIn: bigint): Promise<QuoteResult> 
     const feeMultiplier = new Decimal(1).minus(config.cetusSwapFeePercent / 100);
     const amountOutAfterFee = suiSmallestUnit.mul(feeMultiplier);
 
+    // Safety check: ensure output is not zero or negative
+    if (amountOutAfterFee.lte(0)) {
+      throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
+    }
+
     // Calculate sqrt_price_limit (1% slippage from current)
-    // sqrt_price_limit should be adjusted by slippage
     const poolObject = await client.getObject({
-      id: resolved.cetus.suiUsdcPoolId,
+      id: resolved.cetus.suiUsdcPool.poolId,
       options: { showContent: true },
     });
 
     const content = poolObject.data?.content as any;
-    const currentSqrtPrice = new Decimal(content.fields.current_sqrt_price || content.fields.sqrt_price);
+    const currentSqrtPrice = new Decimal(
+      content.fields.current_sqrt_price || content.fields.sqrt_price
+    );
 
-    // For USDC->SUI (buying SUI), we expect price to move up (less favorable)
-    // So we set a higher sqrt_price_limit (1% above current)
-    const slippageMultiplier = new Decimal(1).plus(config.maxSlippagePercent / 100);
+    // Determine direction based on coin ordering
+    const poolMeta = resolved.cetus.suiUsdcPool;
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // For USDC->SUI swap:
+    // If SUI is A: we're swapping B->A (buying A with B), price moves up
+    // If USDC is A: we're swapping A->B (buying B with A), price moves down
+    const slippageMultiplier = suiIsCoinA
+      ? new Decimal(1).plus(config.maxSlippagePercent / 100)
+      : new Decimal(1).minus(config.maxSlippagePercent / 100);
+
     const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
 
     const quote: QuoteResult = {
@@ -183,6 +219,11 @@ export async function quoteCetusSwapA2B(amountIn: bigint): Promise<QuoteResult> 
     // Get current price to estimate output
     const price = await getCetusPrice();
 
+    // Safety check: reject if price is implausible
+    if (!validatePrice(price, 'Cetus')) {
+      throw new Error(`Cetus price ${price} failed sanity check`);
+    }
+
     // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
     // Convert to proper decimals: SUI (9) -> USDC (6)
     const suiAmount = new Decimal(amountIn.toString()).div(1e9);
@@ -193,18 +234,33 @@ export async function quoteCetusSwapA2B(amountIn: bigint): Promise<QuoteResult> 
     const feeMultiplier = new Decimal(1).minus(config.cetusSwapFeePercent / 100);
     const amountOutAfterFee = usdcSmallestUnit.mul(feeMultiplier);
 
+    // Safety check: ensure output is not zero or negative
+    if (amountOutAfterFee.lte(0)) {
+      throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
+    }
+
     // Calculate sqrt_price_limit (1% slippage from current)
     const poolObject = await client.getObject({
-      id: resolved.cetus.suiUsdcPoolId,
+      id: resolved.cetus.suiUsdcPool.poolId,
       options: { showContent: true },
     });
 
     const content = poolObject.data?.content as any;
-    const currentSqrtPrice = new Decimal(content.fields.current_sqrt_price || content.fields.sqrt_price);
+    const currentSqrtPrice = new Decimal(
+      content.fields.current_sqrt_price || content.fields.sqrt_price
+    );
 
-    // For SUI->USDC (selling SUI), we expect price to move down (less favorable)
-    // So we set a lower sqrt_price_limit (1% below current)
-    const slippageMultiplier = new Decimal(1).minus(config.maxSlippagePercent / 100);
+    // Determine direction based on coin ordering
+    const poolMeta = resolved.cetus.suiUsdcPool;
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // For SUI->USDC swap:
+    // If SUI is A: we're swapping A->B (selling A for B), price moves down
+    // If USDC is A: we're swapping B->A (selling B for A), price moves up
+    const slippageMultiplier = suiIsCoinA
+      ? new Decimal(1).minus(config.maxSlippagePercent / 100)
+      : new Decimal(1).plus(config.maxSlippagePercent / 100);
+
     const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
 
     const quote: QuoteResult = {
@@ -255,7 +311,7 @@ export function buildCetusSwap(
     target: `${CETUS.packageId}::pool::swap`,
     arguments: [
       tx.object(resolved.cetus.globalConfigId),
-      tx.object(resolved.cetus.suiUsdcPoolId),
+      tx.object(resolved.cetus.suiUsdcPool.poolId),
       inputCoin,
       tx.pure.bool(a2b),
       tx.pure.bool(true), // by_amount_in
@@ -287,7 +343,7 @@ export async function getCetusPoolInfo(): Promise<any> {
     const client = getSuiClient();
 
     const poolObject = await client.getObject({
-      id: resolved.cetus.suiUsdcPoolId,
+      id: resolved.cetus.suiUsdcPool.poolId,
       options: {
         showContent: true,
         showType: true,

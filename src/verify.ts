@@ -1,7 +1,8 @@
 import { getSuiClient, objectExists } from './utils/sui';
 import { logger } from './logger';
-import { SUILEND, NAVI, CETUS, TURBOS, COIN_TYPES } from './addresses';
+import { SUILEND, NAVI, CETUS, TURBOS, COIN_TYPES, validateUsdcCoinType } from './addresses';
 import { config } from './config';
+import { getResolvedAddresses } from './resolve';
 
 interface VerificationResult {
   success: boolean;
@@ -43,7 +44,7 @@ async function verifyObjectId(
 }
 
 /**
- * Verify all critical on-chain addresses
+ * Verify all critical on-chain addresses using resolved IDs
  */
 export async function verifyOnChainAddresses(): Promise<VerificationResult> {
   const result: VerificationResult = {
@@ -54,63 +55,67 @@ export async function verifyOnChainAddresses(): Promise<VerificationResult> {
 
   logger.info('Starting on-chain address verification...');
 
-  // Verify Suilend addresses (critical)
-  const suilendChecks = [
-    verifyObjectId('Suilend Package', SUILEND.packageId, true),
-    verifyObjectId('Suilend Market', SUILEND.marketObjectId, true),
-    verifyObjectId('Suilend Lending Market', SUILEND.lendingMarket, true),
-  ];
+  try {
+    // Get resolved addresses
+    const resolved = getResolvedAddresses();
 
-  // Verify Navi addresses (non-critical, as it's a fallback)
-  const naviChecks = [
-    verifyObjectId('Navi Package', NAVI.packageId, false),
-    verifyObjectId('Navi Storage', NAVI.storageId, false),
-    verifyObjectId('Navi USDC Pool', NAVI.usdcPoolId, false),
-  ];
+    // Verify package IDs (these should always be verified)
+    const packageChecks = [
+      verifyObjectId('Suilend Package', SUILEND.packageId, true),
+      verifyObjectId('Navi Package', NAVI.packageId, false),
+      verifyObjectId('Cetus Package', CETUS.packageId, true),
+      verifyObjectId('Turbos Package', TURBOS.packageId, true),
+    ];
 
-  // Verify Cetus addresses (critical)
-  const cetusChecks = [
-    verifyObjectId('Cetus Package', CETUS.packageId, true),
-    verifyObjectId('Cetus Global Config', CETUS.globalConfigId, true),
-    verifyObjectId('Cetus SUI/USDC Pool', CETUS.suiUsdcPoolId, true),
-  ];
+    // Verify resolved pool IDs (critical)
+    const poolChecks = [
+      verifyObjectId('Cetus Global Config', resolved.cetus.globalConfigId, true),
+      verifyObjectId('Cetus SUI/USDC Pool', resolved.cetus.suiUsdcPool.poolId, true),
+      verifyObjectId('Turbos SUI/USDC Pool', resolved.turbos.suiUsdcPool.poolId, true),
+    ];
 
-  // Verify Turbos addresses (critical)
-  const turbosChecks = [
-    verifyObjectId('Turbos Package', TURBOS.packageId, true),
-    verifyObjectId('Turbos SUI/USDC Pool', TURBOS.suiUsdcPoolId, true),
-  ];
+    // Verify resolved lending markets (non-critical, they're fallbacks)
+    const lendingChecks = [
+      verifyObjectId('Suilend Lending Market', resolved.suilend.lendingMarket, false),
+      verifyObjectId('Navi Storage', resolved.navi.storageId, false),
+      verifyObjectId('Navi USDC Pool', resolved.navi.usdcPoolId, false),
+    ];
 
-  // Run all checks
-  const allChecks = [...suilendChecks, ...naviChecks, ...cetusChecks, ...turbosChecks];
+    // Run all checks
+    const allChecks = [...packageChecks, ...poolChecks, ...lendingChecks];
+    const checkResults = await Promise.all(allChecks);
 
-  const checkResults = await Promise.all(allChecks);
-
-  // Process results
-  for (const checkResult of checkResults) {
-    if (checkResult.error) {
-      result.errors.push(checkResult.error);
-      result.success = false;
+    // Process results
+    for (const checkResult of checkResults) {
+      if (checkResult.error) {
+        result.errors.push(checkResult.error);
+        result.success = false;
+      }
+      if (checkResult.warning) {
+        result.warnings.push(checkResult.warning);
+      }
     }
-    if (checkResult.warning) {
-      result.warnings.push(checkResult.warning);
+
+    // Summary
+    if (result.success) {
+      logger.success('✓ All critical on-chain addresses verified successfully');
+    } else {
+      logger.error('✗ On-chain address verification failed');
+      result.errors.forEach((error) => logger.error(`  - ${error}`));
     }
-  }
 
-  // Summary
-  if (result.success) {
-    logger.success('✓ All critical on-chain addresses verified successfully');
-  } else {
-    logger.error('✗ On-chain address verification failed');
-    result.errors.forEach((error) => logger.error(`  - ${error}`));
-  }
+    if (result.warnings.length > 0) {
+      logger.warn('Warnings during verification:');
+      result.warnings.forEach((warning) => logger.warn(`  - ${warning}`));
+    }
 
-  if (result.warnings.length > 0) {
-    logger.warn('Warnings during verification:');
-    result.warnings.forEach((warning) => logger.warn(`  - ${warning}`));
+    return result;
+  } catch (error) {
+    logger.error('Failed to get resolved addresses for verification', error);
+    result.success = false;
+    result.errors.push(`Failed to get resolved addresses: ${error}`);
+    return result;
   }
-
-  return result;
 }
 
 /**
@@ -126,7 +131,12 @@ export async function runStartupVerification(): Promise<void> {
   }
 
   try {
-    // Verify on-chain addresses
+    // Step 1: Validate USDC coin type (native vs wrapped)
+    logger.info('Validating USDC coin type...');
+    validateUsdcCoinType(config.allowWrappedUsdc);
+    logger.success('✓ USDC coin type validated');
+
+    // Step 2: Verify on-chain addresses
     const verificationResult = await verifyOnChainAddresses();
 
     if (!verificationResult.success) {
@@ -138,7 +148,7 @@ export async function runStartupVerification(): Promise<void> {
       }
     }
 
-    // Additional sanity checks
+    // Step 3: Additional sanity checks
     logger.info('Running sanity checks...');
 
     // Check that coin types are defined

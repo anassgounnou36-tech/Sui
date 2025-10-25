@@ -2,7 +2,7 @@ import { config, validateConfig, smallestUnitToUsdc, usdcToSmallestUnit } from '
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
 import { runStartupVerification } from './verify';
-import { resolvePoolAddresses } from './poolResolver';
+import { resolvePoolAddresses } from './resolve';
 import { getCetusPrice } from './cetusIntegration';
 import { getTurbosPrice } from './turbosIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';

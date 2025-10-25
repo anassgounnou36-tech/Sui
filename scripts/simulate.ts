@@ -1,11 +1,6 @@
-/**
- * Simulate arbitrage execution without signing
- * Builds the full PTB and prints the execution plan
- */
-
 import { config } from '../src/config';
 import { initializeRpcClient } from '../src/utils/sui';
-import { resolvePoolAddresses, getResolvedAddresses } from '../src/poolResolver';
+import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
 import { quoteCetusSwapB2A, quoteCetusSwapA2B } from '../src/cetusIntegration';
 import { quoteTurbosSwapB2A, quoteTurbosSwapA2B } from '../src/turbosIntegration';
 import { SUILEND } from '../src/addresses';
@@ -109,14 +104,20 @@ async function simulateArbitrage() {
     console.log();
 
     console.log(`Step 2: Swap USDC -> SUI on ${buyCheapOnCetus ? 'Cetus' : 'Turbos'}`);
-    console.log(`  Pool: ${buyCheapOnCetus ? resolved.cetus.suiUsdcPoolId : resolved.turbos.suiUsdcPoolId}`);
+    console.log(
+      `  Pool: ${buyCheapOnCetus ? resolved.cetus.suiUsdcPool.poolId : resolved.turbos.suiUsdcPool.poolId}`
+    );
     console.log(`  Amount In: ${flashloanAmount} USDC`);
     console.log(`  Min Out: ${firstSwapMinOut} SUI`);
-    console.log(`  Sqrt Price Limit: ${buyCheapOnCetus ? cetusQuoteB2A.sqrtPriceLimit : turbosQuoteB2A.sqrtPriceLimit}`);
+    console.log(
+      `  Sqrt Price Limit: ${buyCheapOnCetus ? cetusQuoteB2A.sqrtPriceLimit : turbosQuoteB2A.sqrtPriceLimit}`
+    );
     console.log();
 
     console.log(`Step 3: Swap SUI -> USDC on ${buyCheapOnCetus ? 'Turbos' : 'Cetus'}`);
-    console.log(`  Pool: ${buyCheapOnCetus ? resolved.turbos.suiUsdcPoolId : resolved.cetus.suiUsdcPoolId}`);
+    console.log(
+      `  Pool: ${buyCheapOnCetus ? resolved.turbos.suiUsdcPool.poolId : resolved.cetus.suiUsdcPool.poolId}`
+    );
     console.log(`  Amount In: ${firstSwapOut} SUI`);
     console.log(`  Min Out: ${secondSwapMinOut} USDC`);
     console.log(`  Sqrt Price Limit: ${secondSwapQuote.sqrtPriceLimit}`);

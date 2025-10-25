@@ -1,6 +1,6 @@
 import { config } from '../src/config';
 import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
-import { resolvePoolAddresses } from '../src/poolResolver';
+import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
 import { getCetusPrice, getCetusPoolInfo } from '../src/cetusIntegration';
 import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbosIntegration';
 
@@ -83,15 +83,21 @@ async function printSpread() {
     // Pool information
     console.log('Pool Information:');
     try {
-      const cetusPoolInfo = await getCetusPoolInfo();
-      console.log(`  Cetus Pool ID: ${cetusPoolInfo.data?.objectId || 'N/A'}`);
+      const resolved = getResolvedAddresses();
+      await getCetusPoolInfo(); // Verify pool is accessible
+      console.log(`  Cetus Pool ID: ${resolved.cetus.suiUsdcPool.poolId}`);
+      console.log(`  Cetus Coin A: ${resolved.cetus.suiUsdcPool.coinTypeA.split('::').pop()}`);
+      console.log(`  Cetus Coin B: ${resolved.cetus.suiUsdcPool.coinTypeB.split('::').pop()}`);
     } catch (err) {
       console.log(`  Cetus Pool: Error fetching info`);
     }
 
     try {
-      const turbosPoolInfo = await getTurbosPoolInfo();
-      console.log(`  Turbos Pool ID: ${turbosPoolInfo.data?.objectId || 'N/A'}`);
+      const resolved = getResolvedAddresses();
+      await getTurbosPoolInfo(); // Verify pool is accessible
+      console.log(`  Turbos Pool ID: ${resolved.turbos.suiUsdcPool.poolId}`);
+      console.log(`  Turbos Coin A: ${resolved.turbos.suiUsdcPool.coinTypeA.split('::').pop()}`);
+      console.log(`  Turbos Coin B: ${resolved.turbos.suiUsdcPool.coinTypeB.split('::').pop()}`);
     } catch (err) {
       console.log(`  Turbos Pool: Error fetching info`);
     }
