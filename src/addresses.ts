@@ -9,86 +9,62 @@ function getAddress(envKey: string, defaultValue: string): string {
 // Coin Types
 export const COIN_TYPES = {
   SUI: '0x2::sui::SUI',
+  // Native USDC coin type (6 decimals) - mainnet
   USDC: getAddress(
     'USDC_COIN_TYPE',
-    '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN'
+    '0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN'
   ),
 };
 
 // Suilend Configuration
 export const SUILEND = {
+  // Suilend core package ID per spec
   packageId: getAddress(
     'SUILEND_PACKAGE_ID',
-    '0xf95b06141ed4a174f239417323bde3f209b972f5930d8521ea38a52aff3a6ddf'
+    '0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85'
   ),
-  marketObjectId: getAddress(
-    'SUILEND_MARKET_ID',
-    '0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1'
-  ),
-  // Suilend lending market for flashloans
-  lendingMarket: getAddress(
-    'SUILEND_LENDING_MARKET',
-    '0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1'
-  ),
+  // Market object ID - to be resolved dynamically at startup
+  marketObjectId: getAddress('SUILEND_MARKET_ID', ''),
+  // Suilend lending market for flashloans - to be resolved dynamically
+  lendingMarket: getAddress('SUILEND_LENDING_MARKET', ''),
 };
 
 // Navi Protocol Configuration (Fallback)
 export const NAVI = {
+  // Navi core package ID per spec
   packageId: getAddress(
     'NAVI_PACKAGE_ID',
-    '0xd899cf7d2b5db716bd2cf55599fb0d5ee38a3061e7b6bb6eebf73fa5bc4c81ca'
+    '0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42'
   ),
-  storageId: getAddress(
-    'NAVI_STORAGE_ID',
-    '0xbb4e2f4b6205c2e2a2db47aeb4f830796ec7c005f88537ee775986639bc442fe'
-  ),
-  // Navi pool for USDC
-  usdcPoolId: getAddress(
-    'NAVI_USDC_POOL_ID',
-    '0x96df0fce3c471489f4debaaa762cf960b3d97820bd1f3f025ff8190730e958c5'
-  ),
+  // Storage and pool IDs - to be resolved dynamically at startup
+  storageId: getAddress('NAVI_STORAGE_ID', ''),
+  usdcPoolId: getAddress('NAVI_USDC_POOL_ID', ''),
 };
 
 // Cetus DEX Configuration
 export const CETUS = {
+  // Cetus CLMM package ID per spec
   packageId: getAddress(
     'CETUS_PACKAGE_ID',
     '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb'
   ),
-  globalConfigId: getAddress(
-    'CETUS_GLOBAL_CONFIG_ID',
-    '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f'
-  ),
-  // SUI/USDC 0.05% pool
-  suiUsdcPoolId: getAddress(
-    'CETUS_SUI_USDC_POOL_ID',
-    '0xcf994611fd4c48e277ce3ffd4d4364c914af2c3cbb05f7bf6facd371de688630'
-  ),
-  suiUsdcPoolAddress: getAddress(
-    'CETUS_SUI_USDC_POOL_ADDRESS',
-    '0xcf994611fd4c48e277ce3ffd4d4364c914af2c3cbb05f7bf6facd371de688630'
-  ),
+  // Global config and pool IDs - to be resolved dynamically at startup
+  globalConfigId: getAddress('CETUS_GLOBAL_CONFIG_ID', ''),
+  suiUsdcPoolId: getAddress('CETUS_SUI_USDC_POOL_ID', ''),
+  suiUsdcPoolAddress: getAddress('CETUS_SUI_USDC_POOL_ADDRESS', ''),
 };
 
 // Turbos DEX Configuration
 export const TURBOS = {
+  // Turbos CLMM package ID per spec
   packageId: getAddress(
     'TURBOS_PACKAGE_ID',
     '0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1'
   ),
-  factoryId: getAddress(
-    'TURBOS_FACTORY_ID',
-    '0x1e8b0c2a6c8f8b7e6f8a5c4b9d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e'
-  ),
-  // SUI/USDC 0.05% pool
-  suiUsdcPoolId: getAddress(
-    'TURBOS_SUI_USDC_POOL_ID',
-    '0x5eb2dfcdd1b15d2021328258f6d5ec081e9a0cdcfa9e13a0eaeb9b5f7505ca78'
-  ),
-  suiUsdcPoolAddress: getAddress(
-    'TURBOS_SUI_USDC_POOL_ADDRESS',
-    '0x5eb2dfcdd1b15d2021328258f6d5ec081e9a0cdcfa9e13a0eaeb9b5f7505ca78'
-  ),
+  // Factory and pool IDs - to be resolved dynamically at startup
+  factoryId: getAddress('TURBOS_FACTORY_ID', ''),
+  suiUsdcPoolId: getAddress('TURBOS_SUI_USDC_POOL_ID', ''),
+  suiUsdcPoolAddress: getAddress('TURBOS_SUI_USDC_POOL_ADDRESS', ''),
 };
 
 // Pool configurations with fee tiers

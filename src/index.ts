@@ -169,9 +169,13 @@ async function main() {
       logger.warn('Transactions will be simulated but not executed');
     }
 
-    // Initialize Sui client
-    logger.info('Initializing Sui RPC client...');
-    initializeRpcClient(config.rpcUrl);
+    // Initialize Sui client with multi-RPC failover
+    logger.info('Initializing Sui RPC client with failover...');
+    initializeRpcClient(
+      config.rpcEndpoints.primary,
+      config.rpcEndpoints.backup,
+      config.rpcEndpoints.fallback
+    );
 
     // Initialize keypair (skip if dry run)
     if (!config.dryRun) {
