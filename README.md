@@ -1,22 +1,40 @@
 # Sui Flashloan Arbitrage Bot
 
-A TypeScript bot that performs atomic spot-to-spot arbitrage between Cetus and Turbos DEXes on Sui Mainnet, using Suilend flashloans (with Navi as fallback).
+A production-ready TypeScript bot that performs atomic spot-to-spot arbitrage between Cetus and Turbos DEXes on Sui Mainnet, using Suilend flashloans (with Navi as fallback).
 
 ## Features
 
+### Core Functionality
 - **Atomic Transactions**: All operations in a single Programmable Transaction Block (PTB)
-- **Flashloan Funded**: Uses Suilend flashloans (0.05% fee) with Navi fallback (0.06%)
-- **Multi-DEX Arbitrage**: Monitors price spreads between Cetus and Turbos
-- **Safety First**: Built-in slippage protection, profit verification, and dry-run mode
-- **Real-time Monitoring**: Continuous price monitoring with configurable intervals
+- **Flashloan Funded**: Uses Suilend flashloans (0.05% fee) with automatic Navi fallback (0.06%)
+- **Multi-DEX Arbitrage**: Real-time price monitoring between Cetus and Turbos CLMM pools
+- **Real SDK Integration**: Uses actual pool state and sqrtPrice calculations from on-chain data
+- **Native USDC Support**: Uses native mainnet USDC (6 decimals)
+
+### Safety & Risk Management
+- **Multi-RPC Failover**: Automatic failover between 3 RPC endpoints for reliability
+- **Slippage Protection**: Hard 1% maximum slippage cap with sqrt_price_limit enforcement
+- **Profit Verification**: On-chain verification that profit >= MIN_PROFIT_USDC
+- **Kill Switch**: Automatic shutdown after 3 consecutive failed executions
+- **BigInt Math**: All calculations use BigInt to prevent precision loss
+- **Live Confirmation**: Safety check prevents accidental large-amount executions (>100k USDC)
+
+### Operational Features
+- **Dynamic Pool Resolution**: Automatically discovers and verifies pool IDs at startup
+- **Rate Limiting**: Max 1 tx per 3 seconds, max 5 pending transactions
+- **Spread Confirmation**: Requires 2 consecutive intervals with sufficient spread
+- **JSON Event Logging**: Structured logging for trade events, profits, and errors
+- **Dry Run Mode**: Full simulation without signing or submitting transactions
+- **Docker Support**: Production-ready containerized deployment
 
 ## Prerequisites
 
 - Node.js 20.x or higher
+- Docker and Docker Compose (for containerized deployment)
 - A Sui wallet with:
-  - SUI tokens for gas fees
-  - Initial USDC for small test runs
-- RPC access to Sui Mainnet
+  - SUI tokens for gas fees (minimum 0.1 SUI recommended)
+  - No USDC needed initially (flashloan funded)
+- Multi-RPC access to Sui Mainnet (provided by default)
 
 ## Installation
 
@@ -37,22 +55,59 @@ nano .env
 
 ## Configuration
 
-Edit `.env` with your settings:
+The bot uses environment variables for configuration. See `.env.example` for all available options.
+
+### Essential Configuration
 
 ```env
-# Required
-SUI_RPC_MAINNET=https://fullnode.mainnet.sui.io:443
-PRIVATE_KEY=your_private_key_here
+# Multi-RPC Configuration (automatic failover)
+SUI_RPC_MAINNET_PRIMARY=https://sui-mainnet.public.blastapi.io
+SUI_RPC_MAINNET_BACKUP=https://1rpc.io/sui
+SUI_RPC_MAINNET_FALLBACK=https://sui.rpc.grove.city/v1/01fdb492
+
+# Wallet Configuration
+PRIVATE_KEY=your_private_key_here  # Supports hex (with/without 0x) or base64
 WALLET_ADDRESS=0x_your_wallet_address_here
 
 # Start small for testing!
 FLASHLOAN_AMOUNT=10000000  # 10 USDC (6 decimals)
 MIN_PROFIT_USDC=0.1        # Minimum profit: $0.10
 MIN_SPREAD_PERCENT=0.5     # Require 0.5% spread
-MAX_SLIPPAGE_PERCENT=1.0   # Max 1% slippage
-GAS_BUDGET=100000          # Gas budget in MIST
-CHECK_INTERVAL_MS=5000     # Check every 5 seconds
+MAX_SLIPPAGE_PERCENT=1.0   # Max 1% slippage (hard cap)
 ```
+
+### Advanced Configuration
+
+```env
+# Safety
+LIVE_CONFIRM=false              # MUST be true for amounts >100k USDC
+MAX_CONSECUTIVE_FAILURES=3      # Kill switch threshold
+CONSECUTIVE_SPREAD_REQUIRED=2   # Confirmations before execution
+
+# Monitoring
+CHECK_INTERVAL_MS=5000          # Price check interval
+FINALITY_POLL_INTERVAL_MS=500   # TX finality check interval
+FINALITY_MAX_WAIT_MS=10000      # Max wait for finality
+
+# Verification
+VERIFY_ON_CHAIN=true            # Verify pool IDs at startup (recommended)
+
+# Dry Run
+DRY_RUN=false                   # Set to true for simulation mode
+```
+
+### Coin Types and Package IDs
+
+The bot uses these mainnet addresses by default (can be overridden via env vars):
+
+- **USDC**: `0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN` (native, 6 decimals)
+- **SUI**: `0x2::sui::SUI` (9 decimals)
+- **Cetus CLMM**: `0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`
+- **Turbos CLMM**: `0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1`
+- **Suilend**: `0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85`
+- **Navi**: `0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42`
+
+Pool IDs are resolved dynamically at startup.
 
 ## Build
 
@@ -68,117 +123,230 @@ npm run build
 npm run spread
 ```
 
-This will show current prices and spreads without executing any trades.
+Shows current executable prices from both DEXes at your configured flashloan size, with spread analysis and profitability estimation. No trades executed.
 
-### 2. Dry Run Mode (Simulate Trades)
+### 2. Simulate Full Arbitrage (No Signing)
+
+```bash
+npm run simulate
+```
+
+Builds the complete PTB with:
+- Flashloan borrow
+- Both swaps with min_out and sqrt_price_limit
+- Repay amount calculations
+- Profit projections
+
+Does not sign or submit - safe to run anytime.
+
+### 3. Dry Run Mode (Build But Don't Execute)
 
 ```bash
 npm run dry-run
 ```
 
-This constructs PTBs and prints execution plans without signing or submitting transactions.
+Runs the full monitoring loop with real price checks, but constructs PTBs without signing or submitting. Useful for testing the monitoring logic.
+
+### 4. Live Trading
+
+⚠️ **Safety Checklist Before Going Live:**
+
+- [ ] Verify wallet address is correct
+- [ ] Start with tiny amount (10 USDC)
+- [ ] Run `npm run spread` to check current market
+- [ ] Run `npm run simulate` to verify PTB construction
+- [ ] Monitor first few trades manually
+- [ ] Check transactions on [Suiscan](https://suiscan.xyz)
+- [ ] Set up monitoring/alerts
+- [ ] Have a kill switch ready (Ctrl+C)
+
+```bash
+npm start
+```
+
+### 5. Docker Deployment
+
+Build and run in Docker:
+
+```bash
+# Build the image
+docker build -t sui-arbitrage-bot .
+
+# Run with docker-compose
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+The Docker deployment:
+- Runs as non-root user
+- Includes health checks
+- Persists logs to ./logs
+- Has resource limits (1 CPU, 1GB RAM)
+- Auto-restarts on failure
 
 ### 3. Live Trading
 
 ⚠️ **Safety Checklist Before Going Live:**
 
 - [ ] Verify wallet address is correct
-- [ ] Start with small amount ($10 USDC)
-- [ ] Run dry-run mode first
+- [ ] Start with tiny amount (10 USDC)
+- [ ] Run `npm run spread` to check current market
+- [ ] Run `npm run simulate` to verify PTB construction
 - [ ] Monitor first few trades manually
 - [ ] Check transactions on [Suiscan](https://suiscan.xyz)
-- [ ] Gradually increase to $50-100 after success
 - [ ] Set up monitoring/alerts
-- [ ] Have a kill switch ready
+- [ ] Have a kill switch ready (Ctrl+C)
 
 ```bash
 npm start
 ```
 
-### Run Modes
-
-- **Spread Check**: `npm run spread` - View prices only
-- **Dry Run**: `npm run dry-run` - Simulate without executing
-- **Live**: `npm start` - Execute real trades
-
 ## Safety and Risk Management
 
 ### Built-in Protections
 
-1. **Slippage Cap**: Hard 1% maximum slippage limit
-2. **Profit Verification**: On-chain verification that profit >= MIN_PROFIT_USDC
-3. **Atomic Execution**: All steps in one PTB - either all succeed or all revert
-4. **Rate Limiting**: Max 1 tx per 3 seconds, max 5 pending
-5. **Spread Confirmation**: Requires 2 consecutive ticks with sufficient spread
+1. **Multi-RPC Failover**: Automatic failover to backup RPCs if primary fails
+2. **Slippage Cap**: Hard 1% maximum with sqrt_price_limit enforcement on both swaps
+3. **Profit Verification**: On-chain verification that output >= repay + minProfit
+4. **Atomic Execution**: All steps in one PTB - either all succeed or all revert
+5. **Rate Limiting**: Max 1 tx per 3 seconds, max 5 pending
+6. **Spread Confirmation**: Requires 2 consecutive ticks with sufficient spread
+7. **Kill Switch**: Auto-shutdown after 3 consecutive failures
+8. **Dynamic Pool Resolution**: Verifies all pool IDs exist on-chain before starting
+9. **BigInt Math**: No precision loss even with large amounts
+10. **Live Confirmation Gate**: Blocks >100k USDC without explicit confirmation
 
 ### Fee Structure
 
+All fees are paid from the flashloan proceeds:
+
 - **Flashloan Fee**: 0.05% (Suilend) or 0.06% (Navi fallback)
-- **Swap Fees**: ~0.05% per swap on SUI/USDC pools
-- **Total Cost**: ~0.15% minimum
+- **Swap Fees**: 0.05% per swap on SUI/USDC 0.05% fee tier pools
+- **Total Cost**: ~0.15% minimum (0.05% flashloan + 0.05% × 2 swaps)
 - **Breakeven**: Need >0.15% spread; default minimum is 0.5%
+- **Gas**: ~0.1-0.5 SUI per transaction (~$0.30-1.50 at $3/SUI)
 
 ### Recommended Testing Progression
 
-1. **Week 1**: $10 USDC, monitor every trade
-2. **Week 2**: $50 USDC if no issues
-3. **Week 3**: $100-500 USDC with proven stability
-4. **Month 2+**: Scale to $50k only after extensive successful runs
+Test in production with increasing amounts:
+
+1. **Day 1-7**: 10 USDC - verify basic functionality
+2. **Week 2-3**: 50-100 USDC - confirm stable operation
+3. **Month 2**: 500-1,000 USDC - scale gradually
+4. **Month 3+**: Up to 50k USDC - only after proven stability
+5. **Never**: Don't go above 5M USDC (protocol limits)
+
+Monitor success rate, gas costs, and net profit at each level.
 
 ### Emergency Procedures
 
-**Kill Switch**: `Ctrl+C` or `kill <process_id>`
+**Kill Switch**: 
 
-The bot will complete any pending transaction and shut down gracefully.
+- `Ctrl+C` or `docker-compose down` for graceful shutdown
+- Bot completes pending transaction before exit
+- Automatic shutdown after 3 consecutive failures
+
+**If Bot Misbehaves**:
+
+1. Stop immediately: `Ctrl+C` or `docker-compose down`
+2. Check logs in `./logs/` directory
+3. Review last transactions on Suiscan
+4. Adjust configuration before restarting
+5. Consider running `npm run simulate` first
+
+## Monitoring and Operations
+
+### Log Files
+
+Logs are written to:
+- **Console**: Real-time stdout
+- **File**: `logs/bot-YYYY-MM-DD.log` (rotating daily, max 10 files)
+- **JSON Events**: Trade events logged as JSON for parsing
+
+### Key Metrics to Monitor
+
+- **Spread Detection**: How often profitable spreads appear
+- **Success Rate**: % of successful vs failed executions
+- **Profit Per Trade**: Average and total profits
+- **Gas Costs**: Total SUI spent on gas
+- **Failed Transactions**: Reasons for failures
+- **RPC Failovers**: Frequency of RPC switching
+
+### Logs Location
+
+```bash
+# View today's log
+tail -f logs/bot-$(date +%Y-%m-%d).log
+
+# Search for trade events
+grep "TRADE" logs/*.log | jq .
+
+# View errors only
+grep "ERROR" logs/*.log
+```
+
+### Common Issues and Solutions
+
+**No spreads detected**: 
+- Market is efficient, spreads below threshold
+- Try lowering MIN_SPREAD_PERCENT (but watch profitability)
+- Increase CHECK_INTERVAL_MS to catch fleeting opportunities
+
+**Transaction failed - slippage exceeded**: 
+- Price moved too fast between quote and execution
+- Market volatility too high
+- Consider lowering MAX_SLIPPAGE_PERCENT or FLASHLOAN_AMOUNT
+
+**RPC connection errors**:
+- Multi-RPC failover should handle automatically
+- Check if all 3 RPC endpoints are accessible
+- Verify firewall/network settings
+
+**Insufficient balance for gas**:
+- Need at least 0.1 SUI for gas fees
+- Bot will warn on startup if SUI balance is low
+
+**Kill switch activated**:
+- Review logs to understand failure cause
+- Fix configuration or wait for better market conditions
+- Bot protects you from repeated failures
 
 ## Project Structure
 
 ```
 sui-flashloan-arbitrage-bot/
 ├── src/
-│   ├── index.ts           # Main monitoring loop
-│   ├── config.ts          # Configuration and validation
-│   ├── logger.ts          # Logging system
-│   ├── addresses.ts       # On-chain contract addresses
-│   ├── verify.ts          # Startup verification
-│   ├── cetus.ts           # Cetus DEX integration
-│   ├── turbos.ts          # Turbos DEX integration
-│   ├── flashloan.ts       # Suilend/Navi flashloan wrappers
-│   ├── executor.ts        # PTB execution logic
-│   ├── slippage.ts        # Slippage calculations
+│   ├── index.ts              # Main monitoring loop
+│   ├── config.ts             # Configuration and validation
+│   ├── logger.ts             # Logging system with JSON events
+│   ├── addresses.ts          # On-chain contract addresses
+│   ├── poolResolver.ts       # Dynamic pool ID resolution
+│   ├── cetusIntegration.ts   # Cetus DEX with real quotes
+│   ├── turbosIntegration.ts  # Turbos DEX with real quotes
+│   ├── verify.ts             # Startup verification
+│   ├── flashloan.ts          # Suilend/Navi flashloan wrappers
+│   ├── executor.ts           # PTB execution logic
+│   ├── slippage.ts           # Slippage calculations
 │   └── utils/
-│       └── sui.ts         # Sui RPC client utilities
+│       └── sui.ts            # Sui RPC client with failover
 ├── scripts/
-│   └── print-spread.ts    # Price monitoring script
-├── logs/                  # Log files (auto-generated)
+│   ├── print-spread.ts       # Price monitoring script
+│   └── simulate.ts           # PTB simulation script
+├── logs/                     # Log files (auto-generated)
+├── Dockerfile                # Production Docker image
+├── docker-compose.yml        # Docker Compose configuration
+├── .dockerignore
 ├── package.json
 ├── tsconfig.json
 ├── .env.example
 ├── .gitignore
 └── README.md
 ```
-
-## Monitoring and Operations
-
-### Logs
-
-Logs are written to:
-- Console (stdout)
-- `logs/bot-YYYY-MM-DD.log` (rotating daily)
-
-### Key Metrics to Monitor
-
-- Spread detection frequency
-- Execution success rate
-- Profit per trade
-- Gas costs
-- Failed transactions (and reasons)
-
-### Common Issues
-
-**No spreads detected**: Market is efficient, spreads below threshold
-**Transaction failed**: Slippage exceeded, price moved too fast
-**Insufficient balance**: Need more USDC or SUI for gas
 
 ## Development
 
@@ -192,9 +360,45 @@ npm run lint
 # Formatting
 npm run format
 
-# Run tests (placeholder)
-npm test
+# Build
+npm run build
 ```
+
+## Architecture
+
+### Arbitrage Flow
+
+1. **Initialization**: 
+   - Connect to multi-RPC endpoints
+   - Resolve all pool and market IDs dynamically
+   - Verify addresses exist on-chain
+   
+2. **Monitoring Loop**:
+   - Fetch executable quotes at configured size from both DEXes
+   - Calculate spread from actual sqrtPrice in pool state
+   - Require 2 consecutive intervals above MIN_SPREAD_PERCENT
+   
+3. **Execution** (when spread detected):
+   - Borrow USDC via Suilend flashloan (Navi fallback)
+   - Swap USDC→SUI on cheaper DEX (with min_out and sqrt_price_limit)
+   - Swap SUI→USDC on expensive DEX (with min_out ≥ repay + profit)
+   - Split coins: repay exact amount, send profit to wallet
+   - All in single atomic PTB
+   
+4. **Safety Checks**:
+   - Verify both quotes meet slippage requirements
+   - Ensure second swap output covers repay + min profit
+   - Rate limit: 1 tx per 3s, max 5 pending
+   - Kill switch after 3 consecutive failures
+
+### Key Design Decisions
+
+- **BigInt Throughout**: No Number conversions to prevent precision loss
+- **Dynamic Resolution**: Pool IDs fetched at startup, not hardcoded
+- **Real Quotes**: Calculate from actual sqrtPrice, not mocked
+- **Multi-RPC**: Automatic failover for reliability
+- **Atomic PTBs**: All-or-nothing execution
+- **Structured Logging**: JSON events for monitoring/alerting
 
 ## License
 
@@ -202,24 +406,49 @@ MIT License - See LICENSE file for details
 
 ## Disclaimer
 
-**Use at your own risk.** This bot interacts with DeFi protocols and executes real financial transactions. Always:
+**Use at your own risk.** This bot interacts with DeFi protocols and executes real financial transactions on Sui Mainnet. Always:
 
-- Start with small amounts
-- Understand the code before running
-- Monitor actively during initial runs
-- Be aware of smart contract risks
-- Never commit private keys to version control
+- **Start with tiny amounts** (10 USDC) and scale gradually
+- **Understand the code** before running in production
+- **Monitor actively** during initial runs and scale-up
+- **Be aware of risks**: Smart contract risks, market risks, execution risks
+- **Never commit private keys** to version control
+- **Use testnet first** if available for your testing
+- **Set LIVE_CONFIRM=true** for amounts >100k USDC
 
-The authors assume no liability for any losses incurred.
+The bot includes multiple safety features (kill switch, slippage caps, rate limiting, etc.) but cannot eliminate all risks. Market conditions can change rapidly. DeFi protocols may have bugs or vulnerabilities. You are responsible for all trades executed.
+
+**The authors and contributors assume no liability for any losses incurred.**
 
 ## Contributing
 
 Contributions welcome! Please:
 1. Fork the repository
 2. Create a feature branch
-3. Test thoroughly
-4. Submit a pull request
+3. Test thoroughly with dry-run and small amounts
+4. Submit a pull request with clear description
 
 ## Support
 
-For issues or questions, please open a GitHub issue.
+For issues, questions, or feature requests, please open a GitHub issue.
+
+## Acknowledgments
+
+- Sui Foundation for the Sui blockchain
+- Cetus Protocol for the CLMM DEX
+- Turbos Finance for the CLMM DEX  
+- Suilend and Navi Protocol for flashloan infrastructure
+
+## Version History
+
+### v1.0.0 - Production Release
+- Native mainnet USDC support
+- Real SDK integrations for Cetus and Turbos
+- Dynamic pool resolution
+- Multi-RPC failover
+- BigInt-only math
+- Slippage protection with sqrt_price_limit
+- Kill switch and safety checks
+- JSON event logging
+- Docker deployment support
+- Comprehensive documentation
