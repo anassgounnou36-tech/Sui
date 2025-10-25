@@ -1,6 +1,6 @@
 import { getSuiClient, objectExists } from './utils/sui';
 import { logger } from './logger';
-import { ALL_ADDRESSES, SUILEND, NAVI, CETUS, TURBOS, COIN_TYPES } from './addresses';
+import { SUILEND, NAVI, CETUS, TURBOS, COIN_TYPES } from './addresses';
 import { config } from './config';
 
 interface VerificationResult {
@@ -82,12 +82,7 @@ export async function verifyOnChainAddresses(): Promise<VerificationResult> {
   ];
 
   // Run all checks
-  const allChecks = [
-    ...suilendChecks,
-    ...naviChecks,
-    ...cetusChecks,
-    ...turbosChecks,
-  ];
+  const allChecks = [...suilendChecks, ...naviChecks, ...cetusChecks, ...turbosChecks];
 
   const checkResults = await Promise.all(allChecks);
 
@@ -119,31 +114,6 @@ export async function verifyOnChainAddresses(): Promise<VerificationResult> {
 }
 
 /**
- * Verify package module visibility (where feasible)
- */
-async function verifyPackageModule(
-  packageId: string,
-  moduleName: string
-): Promise<boolean> {
-  try {
-    const client = getSuiClient();
-    const pkg = await client.getObject({
-      id: packageId,
-      options: {
-        showContent: true,
-      },
-    });
-
-    // Basic check - just verify package exists
-    // More detailed module checks would require parsing package contents
-    return pkg.data !== null;
-  } catch (error) {
-    logger.debug(`Could not verify package module ${moduleName}: ${error}`);
-    return false;
-  }
-}
-
-/**
  * Run full startup verification routine
  */
 export async function runStartupVerification(): Promise<void> {
@@ -164,9 +134,7 @@ export async function runStartupVerification(): Promise<void> {
 
       // Hard fail if configured
       if (config.verifyOnChain) {
-        throw new Error(
-          'Startup verification failed. Please check your address configuration.'
-        );
+        throw new Error('Startup verification failed. Please check your address configuration.');
       }
     }
 

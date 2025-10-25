@@ -1,8 +1,7 @@
-import { Transaction } from '@mysten/sui/transactions';
 import { logger } from './logger';
-import { config, smallestUnitToUsdc } from './config';
+import { config } from './config';
 import { COIN_TYPES, CETUS, TURBOS } from './addresses';
-import { buildTransaction, signAndExecuteTransaction, dryRunTransaction } from './utils/sui';
+import { buildTransaction, signAndExecuteTransaction } from './utils/sui';
 import {
   borrowFromSuilend,
   repayToSuilend,
@@ -10,7 +9,6 @@ import {
   repayToNavi,
   calculateRepayAmount,
 } from './flashloan';
-import { calculateMinOut, assertMinOut } from './slippage';
 
 export type ArbDirection = 'cetus-to-turbos' | 'turbos-to-cetus';
 
@@ -217,24 +215,17 @@ export async function executeFlashloanArb(
  * @param amount Flashloan amount
  * @returns Estimated profit
  */
-export async function simulateArbitrage(
-  direction: ArbDirection,
-  amount: bigint
-): Promise<bigint> {
+export async function simulateArbitrage(direction: ArbDirection, amount: bigint): Promise<bigint> {
   logger.debug(`Simulating arbitrage: ${direction}, amount: ${amount}`);
 
   // For simulation, we use the quotes from DEXes
   // This is a simplified calculation
-  const flashloanFee = (amount * BigInt(Math.floor(config.suilendFeePercent * 100))) / BigInt(10000);
-  const swapFee1 = (amount * BigInt(50)) / BigInt(10000); // 0.05%
-  const swapFee2 = (amount * BigInt(50)) / BigInt(10000); // 0.05%
-
-  const totalFees = flashloanFee + swapFee1 + swapFee2;
-
   // In a real scenario, you'd get actual quotes from both DEXes
-  // For now, estimate based on spread
-  // This is very approximate and should use real quotes
-  const estimatedProfit = BigInt(0); // Placeholder
+  // and calculate based on real spread and fees
+
+  // Placeholder: return 0 for now
+  // TODO: Implement proper simulation with actual DEX quotes
+  const estimatedProfit = BigInt(0);
 
   return estimatedProfit;
 }

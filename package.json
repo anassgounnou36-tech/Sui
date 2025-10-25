@@ -2,13 +2,13 @@
   "name": "sui-flashloan-arbitrage-bot",
   "version": "1.0.0",
   "description": "Sui Mainnet flashloan arbitrage bot for spot-to-spot arbitrage between Cetus and Turbos",
-  "main": "dist/index.js",
+  "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\"",
-    "start": "node dist/index.js",
-    "dry-run": "DRY_RUN=true node dist/index.js",
+    "start": "node dist/src/index.js",
+    "dry-run": "DRY_RUN=true node dist/src/index.js",
     "test": "echo \"Placeholder: No tests yet\" && exit 0",
     "typecheck": "tsc --noEmit",
     "spread": "node dist/scripts/print-spread.js"

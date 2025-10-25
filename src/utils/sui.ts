@@ -100,7 +100,7 @@ export async function signAndExecuteTransaction(
       logger.info(`Transaction submitted: ${digest}`);
 
       // Wait for finality
-      let finalTx = result;
+      const finalTx = result;
       let pollAttempts = 0;
       const maxPollAttempts = 20; // 10 seconds max
 
@@ -217,9 +217,8 @@ export async function getAllBalances(address: string): Promise<Map<string, bigin
 /**
  * Dry run a transaction to estimate gas and effects
  */
-export async function dryRunTransaction(tx: Transaction): Promise<any> {
+export async function dryRunTransaction(tx: any): Promise<any> {
   const client = getSuiClient();
-  const kp = getKeypair();
 
   try {
     const result = await client.dryRunTransactionBlock({

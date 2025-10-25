@@ -20,7 +20,7 @@ let successfulExecutions = 0;
  * Calculate spread percentage between two prices
  */
 function calculateSpread(price1: number, price2: number): number {
-  return Math.abs(price1 - price2) / Math.min(price1, price2) * 100;
+  return (Math.abs(price1 - price2) / Math.min(price1, price2)) * 100;
 }
 
 /**
@@ -72,12 +72,11 @@ async function monitoringLoop() {
     // Fetch prices from both DEXes
     logger.debug('Fetching prices from Cetus and Turbos...');
 
-    const [cetusPrice, turbosPrice] = await Promise.all([
-      getCetusPrice(),
-      getTurbosPrice(),
-    ]);
+    const [cetusPrice, turbosPrice] = await Promise.all([getCetusPrice(), getTurbosPrice()]);
 
-    logger.info(`Cetus: ${cetusPrice.toFixed(6)} USDC/SUI | Turbos: ${turbosPrice.toFixed(6)} USDC/SUI`);
+    logger.info(
+      `Cetus: ${cetusPrice.toFixed(6)} USDC/SUI | Turbos: ${turbosPrice.toFixed(6)} USDC/SUI`
+    );
 
     // Calculate spread
     const spread = calculateSpread(cetusPrice, turbosPrice);
@@ -139,7 +138,9 @@ async function monitoringLoop() {
       if (result.txDigest) {
         logger.success(`  TX: ${result.txDigest}`);
       }
-      logger.info(`Total P&L: ${totalProfitUsdc.toFixed(6)} USDC (${successfulExecutions}/${totalExecutions} successful)`);
+      logger.info(
+        `Total P&L: ${totalProfitUsdc.toFixed(6)} USDC (${successfulExecutions}/${totalExecutions} successful)`
+      );
 
       // Reset consecutive count after successful execution
       consecutiveSpreadCount = 0;
@@ -188,7 +189,8 @@ async function main() {
       }
 
       const suiBalance = balances.get(COIN_TYPES.SUI) || BigInt(0);
-      if (suiBalance < BigInt(100_000_000)) { // Less than 0.1 SUI
+      if (suiBalance < BigInt(100_000_000)) {
+        // Less than 0.1 SUI
         logger.warn('Low SUI balance for gas fees!');
       }
     }
@@ -224,16 +226,19 @@ async function main() {
     // Keep process alive
     process.on('SIGINT', async () => {
       logger.info('Received SIGINT, shutting down gracefully...');
-      logger.info(`Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`);
+      logger.info(
+        `Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`
+      );
       process.exit(0);
     });
 
     process.on('SIGTERM', async () => {
       logger.info('Received SIGTERM, shutting down gracefully...');
-      logger.info(`Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`);
+      logger.info(
+        `Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`
+      );
       process.exit(0);
     });
-
   } catch (error) {
     logger.error('Fatal error during startup', error);
     process.exit(1);

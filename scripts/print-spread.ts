@@ -1,5 +1,4 @@
-import { config, validateConfig } from '../src/config';
-import { logger } from '../src/logger';
+import { config } from '../src/config';
 import { initializeRpcClient } from '../src/utils/sui';
 import { getCetusPrice, getCetusPoolInfo } from '../src/cetus';
 import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbos';
@@ -25,10 +24,7 @@ async function printSpread() {
     console.log('Fetching prices from Cetus and Turbos...\n');
 
     // Fetch prices
-    const [cetusPrice, turbosPrice] = await Promise.all([
-      getCetusPrice(),
-      getTurbosPrice(),
-    ]);
+    const [cetusPrice, turbosPrice] = await Promise.all([getCetusPrice(), getTurbosPrice()]);
 
     // Display prices
     console.log('Current Prices (SUI/USDC):');

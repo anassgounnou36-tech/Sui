@@ -94,9 +94,7 @@ export function validateConfig(): void {
   }
 
   if (config.minSpreadPercent < 0.1) {
-    console.warn(
-      'Warning: MIN_SPREAD_PERCENT < 0.1% may result in unprofitable trades after fees'
-    );
+    console.warn('Warning: MIN_SPREAD_PERCENT < 0.1% may result in unprofitable trades after fees');
   }
 
   if (config.flashloanAmount < 1_000_000) {

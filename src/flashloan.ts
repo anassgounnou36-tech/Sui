@@ -1,7 +1,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { logger } from './logger';
 import { config } from './config';
-import { SUILEND, NAVI, COIN_TYPES } from './addresses';
+import { SUILEND, NAVI } from './addresses';
 import { sleep } from './utils/sui';
 
 /**
@@ -23,10 +23,7 @@ export async function borrowFromSuilend(
     // In production, use proper Suilend SDK integration
     const [borrowedCoins, receipt] = tx.moveCall({
       target: `${SUILEND.packageId}::lending::borrow_flash`,
-      arguments: [
-        tx.object(SUILEND.lendingMarket),
-        tx.pure.u64(amount.toString()),
-      ],
+      arguments: [tx.object(SUILEND.lendingMarket), tx.pure.u64(amount.toString())],
       typeArguments: [coinType],
     });
 
@@ -59,11 +56,7 @@ export function repayToSuilend(
     // In production, use proper Suilend SDK integration
     tx.moveCall({
       target: `${SUILEND.packageId}::lending::repay_flash`,
-      arguments: [
-        tx.object(SUILEND.lendingMarket),
-        receipt,
-        repayCoins,
-      ],
+      arguments: [tx.object(SUILEND.lendingMarket), receipt, repayCoins],
       typeArguments: [coinType],
     });
 

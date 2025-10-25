@@ -93,8 +93,15 @@ class Logger {
     this.writeToFile(formatted);
   }
 
-  warn(message: string): void {
-    const formatted = this.formatMessage('WARN', message);
+  warn(message: string, error?: Error | unknown): void {
+    let formatted = this.formatMessage('WARN', message);
+    if (error) {
+      if (error instanceof Error) {
+        formatted += `\n${error.stack || error.message}`;
+      } else {
+        formatted += `\n${String(error)}`;
+      }
+    }
     console.warn(formatted);
     this.writeToFile(formatted);
   }

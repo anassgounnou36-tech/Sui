@@ -141,7 +141,8 @@ export function calculateTotalFees(
   swapFee2Bps: number
 ): bigint {
   // Flashloan fee
-  const flashloanFee = (flashloanAmount * BigInt(Math.floor(flashloanFeePercent * 100))) / BigInt(10000);
+  const flashloanFee =
+    (flashloanAmount * BigInt(Math.floor(flashloanFeePercent * 100))) / BigInt(10000);
 
   // Swap fees (approximate, as they apply to different amounts)
   const swap1Fee = (flashloanAmount * BigInt(swapFee1Bps)) / BigInt(10000);

@@ -1,6 +1,6 @@
 import { getSuiClient } from './utils/sui';
 import { logger } from './logger';
-import { CETUS, COIN_TYPES } from './addresses';
+import { CETUS } from './addresses';
 import { config } from './config';
 
 // Simple price cache
@@ -10,7 +10,7 @@ interface PriceCache {
 }
 
 let priceCache: PriceCache | null = null;
-let quoteCache: Map<string, { amount: bigint; timestamp: number }> = new Map();
+const quoteCache: Map<string, { amount: bigint; timestamp: number }> = new Map();
 
 /**
  * Check if cache is still valid
@@ -98,9 +98,7 @@ export async function quoteCetusSwapA2B(amountIn: bigint): Promise<bigint> {
     // Cache result
     quoteCache.set(cacheKey, { amount: outputAmount, timestamp: Date.now() });
 
-    logger.debug(
-      `Cetus quote A2B: ${amountIn} SUI -> ${outputAmount} USDC (price: ${price})`
-    );
+    logger.debug(`Cetus quote A2B: ${amountIn} SUI -> ${outputAmount} USDC (price: ${price})`);
 
     return outputAmount;
   } catch (error) {
@@ -139,9 +137,7 @@ export async function quoteCetusSwapB2A(amountIn: bigint): Promise<bigint> {
     // Cache result
     quoteCache.set(cacheKey, { amount: outputAmount, timestamp: Date.now() });
 
-    logger.debug(
-      `Cetus quote B2A: ${amountIn} USDC -> ${outputAmount} SUI (price: ${price})`
-    );
+    logger.debug(`Cetus quote B2A: ${amountIn} USDC -> ${outputAmount} SUI (price: ${price})`);
 
     return outputAmount;
   } catch (error) {
