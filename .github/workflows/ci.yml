@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run type checking
+      run: npm run typecheck
+
+    - name: Run linter
+      run: npm run lint
+
+    - name: Build project
+      run: npm run build
+
+    - name: Create logs directory
+      run: mkdir -p logs
+
+    - name: Setup mock environment for dry run
+      run: |
+        cp .env.example .env
+        # Override with safe values for CI
+        echo "DRY_RUN=true" >> .env
+        echo "VERIFY_ON_CHAIN=false" >> .env
+        echo "PRIVATE_KEY=mock_key_for_ci_only" >> .env
+        echo "WALLET_ADDRESS=0x0000000000000000000000000000000000000000000000000000000000000000" >> .env
+
+    - name: Test dry run (no signing)
+      run: |
+        timeout 30s npm run dry-run || exit_code=$?
+        # Exit code 124 means timeout (expected)
+        # Exit code 0 means successful run
+        # Any other exit code is a failure
+        if [ $exit_code -eq 124 ] || [ $exit_code -eq 0 ]; then
+          echo "Dry run test passed (timeout or clean exit)"
+          exit 0
+        else
+          echo "Dry run test failed with exit code $exit_code"
+          exit 1
+        fi
+      env:
+        DRY_RUN: true
+        VERIFY_ON_CHAIN: false
+
+    - name: Run tests (placeholder)
+      run: npm test
