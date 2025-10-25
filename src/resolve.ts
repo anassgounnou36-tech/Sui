@@ -54,8 +54,120 @@ export function getResolvedAddresses(): ResolvedAddresses {
 }
 
 /**
+ * Robustly parse pool type arguments from a Move type string
+ * Handles nested generics like Pool<CoinA, CoinB, Fee<...>>
+ * Returns only the coin types (first 2 type arguments)
+ */
+function parsePoolTypeArguments(poolType: string): string[] {
+  // Find the start of type arguments
+  const start = poolType.indexOf('<');
+  const end = poolType.lastIndexOf('>');
+  
+  if (start === -1 || end === -1) {
+    return [];
+  }
+  
+  const typeArgs = poolType.substring(start + 1, end);
+  const result: string[] = [];
+  let current = '';
+  let depth = 0;
+  
+  // Parse type arguments while tracking nesting depth
+  for (let i = 0; i < typeArgs.length; i++) {
+    const char = typeArgs[i];
+    
+    if (char === '<') {
+      depth++;
+      current += char;
+    } else if (char === '>') {
+      depth--;
+      current += char;
+    } else if (char === ',' && depth === 0) {
+      // Top-level comma - this separates type arguments
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  // Add the last argument
+  if (current.trim()) {
+    result.push(current.trim());
+  }
+  
+  // Only return the first 2 arguments (coin types), ignore fee structs
+  return result.slice(0, 2);
+}
+
+/**
+ * Verify a pool by ID and extract metadata
+ */
+async function verifyAndExtractPoolMetadata(
+  client: SuiClient,
+  poolId: string,
+  dexName: string
+): Promise<PoolMetadata> {
+  const poolObj = await client.getObject({
+    id: poolId,
+    options: { showContent: true, showType: true },
+  });
+
+  if (!poolObj.data || !poolObj.data.content) {
+    throw new Error(`${dexName} pool not found: ${poolId}`);
+  }
+
+  const content = poolObj.data.content as any;
+  if (content.dataType !== 'moveObject') {
+    throw new Error(`Invalid ${dexName} pool object type`);
+  }
+
+  const poolType = poolObj.data.type;
+  if (!poolType) {
+    throw new Error('Pool type not found');
+  }
+
+  // Parse type arguments robustly (only coin types, not fee struct)
+  const typeArgs = parsePoolTypeArguments(poolType);
+  if (typeArgs.length < 2) {
+    throw new Error(
+      `Cannot parse pool type arguments from ${poolType}. ` +
+      `Expected at least 2 coin types but got ${typeArgs.length}`
+    );
+  }
+
+  const [coinTypeA, coinTypeB] = typeArgs;
+
+  // Verify this is SUI/USDC with native USDC
+  const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+  const hasUsdc = coinTypeA === COIN_TYPES.USDC || coinTypeB === COIN_TYPES.USDC;
+
+  if (!hasSui || !hasUsdc) {
+    throw new Error(
+      `${dexName} pool does not contain SUI and native USDC. ` +
+      `Found: Coin A = ${coinTypeA}, Coin B = ${coinTypeB}. ` +
+      `Expected native USDC: ${COIN_TYPES.USDC}`
+    );
+  }
+
+  const fields = content.fields;
+  const currentSqrtPrice = 
+    fields.current_sqrt_price || fields.sqrt_price || fields.sqrtPrice;
+  const liquidity = fields.liquidity;
+
+  return {
+    poolId,
+    coinTypeA,
+    coinTypeB,
+    feeTier: 500, // 0.05%
+    currentSqrtPrice: currentSqrtPrice?.toString(),
+    liquidity: liquidity?.toString(),
+  };
+}
+
+/**
  * Resolve Cetus pool for SUI/USDC 0.05% fee tier
- * Uses SDK to discover the pool based on coin types and fee
+ * Supports manual override via CETUS_SUI_USDC_POOL_ID env variable
  */
 async function resolveCetusPool(client: SuiClient): Promise<{
   globalConfigId: string;
@@ -68,82 +180,58 @@ async function resolveCetusPool(client: SuiClient): Promise<{
     process.env.CETUS_GLOBAL_CONFIG_ID ||
     '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f';
 
-  // Known SUI/USDC pool ID (0.05% fee tier)
-  // In production with SDK, you would use CetusClmmSDK.Pool.getPools() to discover
-  const poolId =
-    process.env.CETUS_SUI_USDC_POOL_ID ||
-    '0xcf994611fd4c48e277ce3ffd4d4364c914af2c3cbb05f7bf6facd371de688630';
-
-  // Verify pool exists and fetch metadata
   try {
-    const poolObj = await client.getObject({
-      id: poolId,
-      options: { showContent: true, showType: true },
-    });
-
-    if (!poolObj.data || !poolObj.data.content) {
-      throw new Error(`Cetus pool not found: ${poolId}`);
-    }
-
-    const content = poolObj.data.content as any;
-    if (content.dataType !== 'moveObject') {
-      throw new Error('Invalid Cetus pool object type');
-    }
-
-    const fields = content.fields;
-
-    // Extract type arguments from pool type to determine coin ordering
-    const poolType = poolObj.data.type;
-    if (!poolType) {
-      throw new Error('Pool type not found');
-    }
-
-    // Parse type arguments: Pool<CoinA, CoinB>
-    const typeMatch = poolType.match(/<([^,]+),\s*([^>]+)>/);
-    if (!typeMatch) {
-      throw new Error(`Cannot parse pool type: ${poolType}`);
-    }
-
-    const [, coinTypeA, coinTypeB] = typeMatch;
-
-    // Determine which coin is SUI and which is USDC
-    const suiIsCoinA = coinTypeA === COIN_TYPES.SUI;
-    const usdcIsCoinA = coinTypeA === COIN_TYPES.USDC;
-
-    if (!suiIsCoinA && !usdcIsCoinA) {
-      throw new Error(
-        `Pool does not contain expected coin types. Found: ${coinTypeA}, ${coinTypeB}`
+    // Check for manual override first
+    const manualPoolId = process.env.CETUS_SUI_USDC_POOL_ID;
+    
+    if (manualPoolId) {
+      logger.info(`Using manual Cetus pool override: ${manualPoolId}`);
+      
+      const poolMetadata = await verifyAndExtractPoolMetadata(
+        client,
+        manualPoolId,
+        'Cetus'
       );
+
+      logger.success(`✓ Cetus pool resolved (manual): ${manualPoolId}`);
+      logger.info(`  Coin A: ${poolMetadata.coinTypeA.split('::').pop()}`);
+      logger.info(`  Coin B: ${poolMetadata.coinTypeB.split('::').pop()}`);
+      logger.info(`  Fee: 0.05%`);
+
+      return { globalConfigId, suiUsdcPool: poolMetadata };
     }
 
-    // Extract current sqrtPrice for metadata
-    const currentSqrtPrice = fields.current_sqrt_price || fields.sqrt_price;
-    const liquidity = fields.liquidity;
+    // Use known production pool ID (validated for native USDC)
+    // This is the SUI/native USDC 0.05% pool on Cetus mainnet
+    const knownPoolId = '0xcf994611fd4c48e277ce3ffd4d4364c914af2c3cbb05f7bf6facd371de688630';
+    
+    logger.info(`Discovering Cetus pool via known pool ID: ${knownPoolId}`);
+    
+    const poolMetadata = await verifyAndExtractPoolMetadata(
+      client,
+      knownPoolId,
+      'Cetus'
+    );
 
-    const poolMetadata: PoolMetadata = {
-      poolId,
-      coinTypeA,
-      coinTypeB,
-      feeTier: 500, // 0.05% = 500 bps
-      currentSqrtPrice: currentSqrtPrice?.toString(),
-      liquidity: liquidity?.toString(),
-    };
-
-    logger.success(`✓ Cetus pool resolved: ${poolId}`);
-    logger.info(`  Coin A: ${coinTypeA.split('::').pop()}`);
-    logger.info(`  Coin B: ${coinTypeB.split('::').pop()}`);
+    logger.success(`✓ Cetus pool discovered: ${knownPoolId}`);
+    logger.info(`  Coin A: ${poolMetadata.coinTypeA.split('::').pop()}`);
+    logger.info(`  Coin B: ${poolMetadata.coinTypeB.split('::').pop()}`);
     logger.info(`  Fee: 0.05%`);
-    logger.info(`  SqrtPrice: ${currentSqrtPrice}`);
+    logger.info(`  Note: To override, set CETUS_SUI_USDC_POOL_ID in .env`);
 
     return { globalConfigId, suiUsdcPool: poolMetadata };
   } catch (error) {
     logger.error('Failed to resolve Cetus pool', error);
+    logger.error(
+      'Hint: Set CETUS_SUI_USDC_POOL_ID in .env to manually specify the pool ID'
+    );
     throw new Error(`Cetus pool resolution failed: ${error}`);
   }
 }
 
 /**
  * Resolve Turbos pool for SUI/USDC 0.05% fee tier
+ * Supports manual override via TURBOS_SUI_USDC_POOL_ID env variable
  */
 async function resolveTurbosPool(client: SuiClient): Promise<{
   factoryId: string;
@@ -156,74 +244,51 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
     process.env.TURBOS_FACTORY_ID ||
     '0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1';
 
-  // Known SUI/USDC pool ID (0.05% fee tier)
-  const poolId =
-    process.env.TURBOS_SUI_USDC_POOL_ID ||
-    '0x5eb2dfcdd1b15d2021328258f6d5ec081e9a0cdcfa9e13a0eaeb9b5f7505ca78';
-
-  // Verify pool exists and fetch metadata
   try {
-    const poolObj = await client.getObject({
-      id: poolId,
-      options: { showContent: true, showType: true },
-    });
-
-    if (!poolObj.data || !poolObj.data.content) {
-      throw new Error(`Turbos pool not found: ${poolId}`);
-    }
-
-    const content = poolObj.data.content as any;
-    if (content.dataType !== 'moveObject') {
-      throw new Error('Invalid Turbos pool object type');
-    }
-
-    const fields = content.fields;
-
-    // Extract type arguments from pool type
-    const poolType = poolObj.data.type;
-    if (!poolType) {
-      throw new Error('Pool type not found');
-    }
-
-    const typeMatch = poolType.match(/<([^,]+),\s*([^>]+)>/);
-    if (!typeMatch) {
-      throw new Error(`Cannot parse pool type: ${poolType}`);
-    }
-
-    const [, coinTypeA, coinTypeB] = typeMatch;
-
-    // Verify this is the SUI/USDC pool
-    const suiIsCoinA = coinTypeA === COIN_TYPES.SUI;
-    const usdcIsCoinA = coinTypeA === COIN_TYPES.USDC;
-
-    if (!suiIsCoinA && !usdcIsCoinA) {
-      throw new Error(
-        `Pool does not contain expected coin types. Found: ${coinTypeA}, ${coinTypeB}`
+    // Check for manual override first
+    const manualPoolId = process.env.TURBOS_SUI_USDC_POOL_ID;
+    
+    if (manualPoolId) {
+      logger.info(`Using manual Turbos pool override: ${manualPoolId}`);
+      
+      const poolMetadata = await verifyAndExtractPoolMetadata(
+        client,
+        manualPoolId,
+        'Turbos'
       );
+
+      logger.success(`✓ Turbos pool resolved (manual): ${manualPoolId}`);
+      logger.info(`  Coin A: ${poolMetadata.coinTypeA.split('::').pop()}`);
+      logger.info(`  Coin B: ${poolMetadata.coinTypeB.split('::').pop()}`);
+      logger.info(`  Fee: 0.05%`);
+
+      return { factoryId, suiUsdcPool: poolMetadata };
     }
 
-    // Extract pool metadata
-    const currentSqrtPrice = fields.sqrt_price || fields.current_sqrt_price;
-    const liquidity = fields.liquidity;
+    // Use known production pool ID (validated for native USDC)
+    // This is the SUI/native USDC 0.05% pool on Turbos mainnet
+    const knownPoolId = '0x5eb2dfcdd1b15d2021328258f6d5ec081e9a0cdcfa9e13a0eaeb9b5f7505ca78';
+    
+    logger.info(`Discovering Turbos pool via known pool ID: ${knownPoolId}`);
+    
+    const poolMetadata = await verifyAndExtractPoolMetadata(
+      client,
+      knownPoolId,
+      'Turbos'
+    );
 
-    const poolMetadata: PoolMetadata = {
-      poolId,
-      coinTypeA,
-      coinTypeB,
-      feeTier: 500, // 0.05%
-      currentSqrtPrice: currentSqrtPrice?.toString(),
-      liquidity: liquidity?.toString(),
-    };
-
-    logger.success(`✓ Turbos pool resolved: ${poolId}`);
-    logger.info(`  Coin A: ${coinTypeA.split('::').pop()}`);
-    logger.info(`  Coin B: ${coinTypeB.split('::').pop()}`);
+    logger.success(`✓ Turbos pool discovered: ${knownPoolId}`);
+    logger.info(`  Coin A: ${poolMetadata.coinTypeA.split('::').pop()}`);
+    logger.info(`  Coin B: ${poolMetadata.coinTypeB.split('::').pop()}`);
     logger.info(`  Fee: 0.05%`);
-    logger.info(`  SqrtPrice: ${currentSqrtPrice}`);
+    logger.info(`  Note: To override, set TURBOS_SUI_USDC_POOL_ID in .env`);
 
     return { factoryId, suiUsdcPool: poolMetadata };
   } catch (error) {
     logger.error('Failed to resolve Turbos pool', error);
+    logger.error(
+      'Hint: Set TURBOS_SUI_USDC_POOL_ID in .env to manually specify the pool ID'
+    );
     throw new Error(`Turbos pool resolution failed: ${error}`);
   }
 }
