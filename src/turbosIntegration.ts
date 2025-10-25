@@ -7,7 +7,7 @@ import { getSuiClient } from './utils/sui';
 import { logger } from './logger';
 import { TURBOS, COIN_TYPES } from './addresses';
 import { config } from './config';
-import { getResolvedAddresses } from './poolResolver';
+import { getResolvedAddresses, calculatePriceFromSqrtPrice, validatePrice } from './resolve';
 import { Transaction } from '@mysten/sui/transactions';
 import Decimal from 'decimal.js';
 
@@ -49,7 +49,7 @@ export async function getTurbosPrice(): Promise<number> {
 
     // Fetch pool object
     const poolObject = await client.getObject({
-      id: resolved.turbos.suiUsdcPoolId,
+      id: resolved.turbos.suiUsdcPool.poolId,
       options: {
         showContent: true,
       },
@@ -67,23 +67,39 @@ export async function getTurbosPrice(): Promise<number> {
     const fields = content.fields;
 
     // Extract sqrt_price from pool state
-    // Similar calculation to Cetus: Price = (sqrtPrice / 2^64)^2 * (10^decimal_diff)
     const sqrtPriceStr = fields.sqrt_price || fields.current_sqrt_price;
     if (!sqrtPriceStr) {
       throw new Error('sqrtPrice not found in Turbos pool state');
     }
 
-    const sqrtPrice = new Decimal(sqrtPriceStr);
-    const Q64 = new Decimal(2).pow(64);
+    // Determine coin ordering from resolved metadata
+    const poolMeta = resolved.turbos.suiUsdcPool;
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
 
-    // Calculate price: (sqrtPrice / 2^64)^2
-    const priceRatio = sqrtPrice.div(Q64).pow(2);
+    // Calculate price based on coin ordering
+    let price: number;
 
-    // Adjust for decimal difference (SUI=9, USDC=6)
-    const decimalAdjustment = new Decimal(10).pow(6 - 9);
-    const price = priceRatio.mul(decimalAdjustment).toNumber();
+    if (suiIsCoinA) {
+      // Pool is SUI/USDC, price is in USDC per SUI (what we want)
+      price = calculatePriceFromSqrtPrice(sqrtPriceStr, 9, 6);
+    } else {
+      // Pool is USDC/SUI, price is in SUI per USDC (need to invert)
+      const inversePrice = calculatePriceFromSqrtPrice(sqrtPriceStr, 6, 9);
+      price = 1 / inversePrice;
+    }
 
-    logger.debug(`Turbos price calculated: ${price.toFixed(6)} USDC/SUI (sqrtPrice: ${sqrtPriceStr})`);
+    // Sanity check the price
+    if (!validatePrice(price, 'Turbos')) {
+      throw new Error(
+        `Turbos price ${price.toFixed(6)} USDC/SUI failed sanity check. ` +
+          `Check pool configuration and coin ordering.`
+      );
+    }
+
+    logger.debug(
+      `Turbos price: ${price.toFixed(6)} USDC/SUI (sqrtPrice: ${sqrtPriceStr}, ` +
+        `SUI is ${suiIsCoinA ? 'A' : 'B'})`
+    );
 
     // Cache the price
     priceCache = { price, timestamp: Date.now() };
@@ -116,6 +132,11 @@ export async function quoteTurbosSwapB2A(amountIn: bigint): Promise<QuoteResult>
     // Get current price to estimate output
     const price = await getTurbosPrice();
 
+    // Safety check: reject if price is implausible
+    if (!validatePrice(price, 'Turbos')) {
+      throw new Error(`Turbos price ${price} failed sanity check`);
+    }
+
     // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
     const usdcAmount = new Decimal(amountIn.toString()).div(1e6);
     const suiAmount = usdcAmount.div(price);
@@ -125,17 +146,31 @@ export async function quoteTurbosSwapB2A(amountIn: bigint): Promise<QuoteResult>
     const feeMultiplier = new Decimal(1).minus(config.turbosSwapFeePercent / 100);
     const amountOutAfterFee = suiSmallestUnit.mul(feeMultiplier);
 
+    // Safety check: ensure output is not zero or negative
+    if (amountOutAfterFee.lte(0)) {
+      throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
+    }
+
     // Calculate sqrt_price_limit (1% slippage from current)
     const poolObject = await client.getObject({
-      id: resolved.turbos.suiUsdcPoolId,
+      id: resolved.turbos.suiUsdcPool.poolId,
       options: { showContent: true },
     });
 
     const content = poolObject.data?.content as any;
-    const currentSqrtPrice = new Decimal(content.fields.sqrt_price || content.fields.current_sqrt_price);
+    const currentSqrtPrice = new Decimal(
+      content.fields.sqrt_price || content.fields.current_sqrt_price
+    );
 
-    // For USDC->SUI (buying SUI), set higher sqrt_price_limit (1% above)
-    const slippageMultiplier = new Decimal(1).plus(config.maxSlippagePercent / 100);
+    // Determine direction based on coin ordering
+    const poolMeta = resolved.turbos.suiUsdcPool;
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // For USDC->SUI swap, adjust slippage based on coin ordering
+    const slippageMultiplier = suiIsCoinA
+      ? new Decimal(1).plus(config.maxSlippagePercent / 100)
+      : new Decimal(1).minus(config.maxSlippagePercent / 100);
+
     const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
 
     const quote: QuoteResult = {
@@ -179,6 +214,11 @@ export async function quoteTurbosSwapA2B(amountIn: bigint): Promise<QuoteResult>
     // Get current price to estimate output
     const price = await getTurbosPrice();
 
+    // Safety check: reject if price is implausible
+    if (!validatePrice(price, 'Turbos')) {
+      throw new Error(`Turbos price ${price} failed sanity check`);
+    }
+
     // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
     const suiAmount = new Decimal(amountIn.toString()).div(1e9);
     const usdcAmount = suiAmount.mul(price);
@@ -188,17 +228,31 @@ export async function quoteTurbosSwapA2B(amountIn: bigint): Promise<QuoteResult>
     const feeMultiplier = new Decimal(1).minus(config.turbosSwapFeePercent / 100);
     const amountOutAfterFee = usdcSmallestUnit.mul(feeMultiplier);
 
+    // Safety check: ensure output is not zero or negative
+    if (amountOutAfterFee.lte(0)) {
+      throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
+    }
+
     // Calculate sqrt_price_limit (1% slippage from current)
     const poolObject = await client.getObject({
-      id: resolved.turbos.suiUsdcPoolId,
+      id: resolved.turbos.suiUsdcPool.poolId,
       options: { showContent: true },
     });
 
     const content = poolObject.data?.content as any;
-    const currentSqrtPrice = new Decimal(content.fields.sqrt_price || content.fields.current_sqrt_price);
+    const currentSqrtPrice = new Decimal(
+      content.fields.sqrt_price || content.fields.current_sqrt_price
+    );
 
-    // For SUI->USDC (selling SUI), set lower sqrt_price_limit (1% below)
-    const slippageMultiplier = new Decimal(1).minus(config.maxSlippagePercent / 100);
+    // Determine direction based on coin ordering
+    const poolMeta = resolved.turbos.suiUsdcPool;
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // For SUI->USDC swap, adjust slippage based on coin ordering
+    const slippageMultiplier = suiIsCoinA
+      ? new Decimal(1).minus(config.maxSlippagePercent / 100)
+      : new Decimal(1).plus(config.maxSlippagePercent / 100);
+
     const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
 
     const quote: QuoteResult = {
@@ -248,7 +302,7 @@ export function buildTurbosSwap(
   const [outputCoin] = tx.moveCall({
     target: `${TURBOS.packageId}::pool::swap`,
     arguments: [
-      tx.object(resolved.turbos.suiUsdcPoolId),
+      tx.object(resolved.turbos.suiUsdcPool.poolId),
       inputCoin,
       tx.pure.bool(a2b),
       tx.pure.bool(true), // by_amount_in
@@ -280,7 +334,7 @@ export async function getTurbosPoolInfo(): Promise<any> {
     const client = getSuiClient();
 
     const poolObject = await client.getObject({
-      id: resolved.turbos.suiUsdcPoolId,
+      id: resolved.turbos.suiUsdcPool.poolId,
       options: {
         showContent: true,
         showType: true,

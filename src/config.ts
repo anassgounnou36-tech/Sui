@@ -79,6 +79,9 @@ export const config = {
   // Dry run mode
   dryRun: getEnvBoolean('DRY_RUN', false),
 
+  // Coin type safety
+  allowWrappedUsdc: getEnvBoolean('ALLOW_WRAPPED_USDC', false),
+
   // Fee configurations (as percentages)
   suilendFeePercent: getEnvNumber('SUILEND_FEE_PERCENT', 0.05),
   naviFeePercent: getEnvNumber('NAVI_FEE_PERCENT', 0.06),

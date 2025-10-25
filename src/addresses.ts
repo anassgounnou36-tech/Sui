@@ -6,14 +6,20 @@ function getAddress(envKey: string, defaultValue: string): string {
   return process.env[envKey] || defaultValue;
 }
 
+// Native USDC (recommended)
+const NATIVE_USDC = '0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN';
+
+// Wormhole wrapped USDC (legacy, not recommended)
+const WORMHOLE_USDC = '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN';
+
 // Coin Types
 export const COIN_TYPES = {
   SUI: '0x2::sui::SUI',
   // Native USDC coin type (6 decimals) - mainnet
-  USDC: getAddress(
-    'USDC_COIN_TYPE',
-    '0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN'
-  ),
+  USDC: getAddress('USDC_COIN_TYPE', NATIVE_USDC),
+  // Reference constants
+  NATIVE_USDC,
+  WORMHOLE_USDC,
 };
 
 // Suilend Configuration
@@ -94,3 +100,39 @@ export const ALL_ADDRESSES = {
   cetus: Object.values(CETUS),
   turbos: Object.values(TURBOS),
 };
+
+/**
+ * Validate that USDC coin type is native, not Wormhole wrapped
+ * @param allowWrappedUsdc If true, allow Wormhole USDC (default: false)
+ * @throws Error if Wormhole USDC is used without explicit permission
+ */
+export function validateUsdcCoinType(allowWrappedUsdc: boolean = false): void {
+  const usdcType = COIN_TYPES.USDC;
+  
+  if (usdcType === WORMHOLE_USDC && !allowWrappedUsdc) {
+    throw new Error(
+      'Wormhole wrapped USDC detected! This is not recommended for arbitrage.\n' +
+      'Native USDC should be used instead. If you must use wrapped USDC,\n' +
+      'set ALLOW_WRAPPED_USDC=true and ensure USDC_COIN_TYPE is set correctly.\n' +
+      `Current USDC type: ${usdcType}\n` +
+      `Native USDC: ${NATIVE_USDC}\n` +
+      `Wormhole USDC: ${WORMHOLE_USDC}`
+    );
+  }
+  
+  if (usdcType === NATIVE_USDC) {
+    // Good - using native USDC
+    return;
+  }
+  
+  if (usdcType === WORMHOLE_USDC && allowWrappedUsdc) {
+    console.warn('⚠️  WARNING: Using Wormhole wrapped USDC. Native USDC is recommended.');
+    return;
+  }
+  
+  // Custom coin type provided
+  if (usdcType !== NATIVE_USDC && usdcType !== WORMHOLE_USDC) {
+    console.warn(`⚠️  WARNING: Using custom USDC coin type: ${usdcType}`);
+    console.warn('Ensure this is correct for your use case.');
+  }
+}

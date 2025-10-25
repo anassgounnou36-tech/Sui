@@ -100,14 +100,22 @@ DRY_RUN=false                   # Set to true for simulation mode
 
 The bot uses these mainnet addresses by default (can be overridden via env vars):
 
-- **USDC**: `0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN` (native, 6 decimals)
+- **Native USDC (Recommended)**: `0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN` (6 decimals)
+- **Wormhole USDC (NOT Recommended)**: `0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN` (6 decimals)
+  - ⚠️ **WARNING**: Using Wormhole wrapped USDC requires setting `ALLOW_WRAPPED_USDC=true`. Native USDC is strongly recommended for arbitrage.
 - **SUI**: `0x2::sui::SUI` (9 decimals)
 - **Cetus CLMM**: `0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`
 - **Turbos CLMM**: `0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1`
 - **Suilend**: `0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85`
 - **Navi**: `0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42`
 
-Pool IDs are resolved dynamically at startup.
+**Pool Discovery**: Pool IDs for SUI/USDC pairs are resolved dynamically at startup using the SDKs. The resolver:
+- Discovers pools based on coin types and 0.05% fee tier
+- Validates coin ordering in pools (SUI vs USDC as coin A or B)
+- Extracts current sqrtPrice and liquidity for accurate quotes
+- Verifies all pool IDs exist on-chain before trading
+
+This ensures the bot always uses the correct pools with proper coin ordering, preventing price calculation errors.
 
 ## Build
 
@@ -210,16 +218,24 @@ npm start
 
 ### Built-in Protections
 
-1. **Multi-RPC Failover**: Automatic failover to backup RPCs if primary fails
-2. **Slippage Cap**: Hard 1% maximum with sqrt_price_limit enforcement on both swaps
-3. **Profit Verification**: On-chain verification that output >= repay + minProfit
-4. **Atomic Execution**: All steps in one PTB - either all succeed or all revert
-5. **Rate Limiting**: Max 1 tx per 3 seconds, max 5 pending
-6. **Spread Confirmation**: Requires 2 consecutive ticks with sufficient spread
-7. **Kill Switch**: Auto-shutdown after 3 consecutive failures
-8. **Dynamic Pool Resolution**: Verifies all pool IDs exist on-chain before starting
-9. **BigInt Math**: No precision loss even with large amounts
-10. **Live Confirmation Gate**: Blocks >100k USDC without explicit confirmation
+1. **Native USDC Enforcement**: Rejects Wormhole wrapped USDC by default (requires explicit `ALLOW_WRAPPED_USDC=true` override)
+2. **Pre-Execution Validation**: Validates opportunities with real quotes before building transactions:
+   - Ensures quote outputs are valid (not zero/negative)
+   - Calculates total costs including all fees
+   - Verifies second swap output covers repay + minProfit
+   - Rejects opportunities early if validation fails
+3. **Price Sanity Checks**: Rejects prices outside reasonable bounds (0.01-5.0 USDC/SUI) to prevent calculation errors
+4. **Multi-RPC Failover**: Automatic failover to backup RPCs if primary fails
+5. **Slippage Cap**: Hard 1% maximum with sqrt_price_limit enforcement on both swaps
+6. **Coin Ordering Validation**: Automatically determines correct A->B or B->A direction based on pool coin ordering
+7. **Profit Verification**: On-chain verification that output >= repay + minProfit using min_amount_out
+8. **Atomic Execution**: All steps in one PTB - either all succeed or all revert
+9. **Rate Limiting**: Max 1 tx per 3 seconds, max 5 pending
+10. **Spread Confirmation**: Requires 2 consecutive ticks with sufficient spread
+11. **Kill Switch**: Auto-shutdown after 3 consecutive failures
+12. **Dynamic Pool Resolution**: Discovers and verifies all pool IDs exist on-chain before starting
+13. **BigInt Math**: No precision loss even with large amounts
+14. **Live Confirmation Gate**: Blocks >100k USDC without explicit confirmation
 
 ### Fee Structure
 
@@ -369,33 +385,58 @@ npm run build
 ### Arbitrage Flow
 
 1. **Initialization**: 
-   - Connect to multi-RPC endpoints
-   - Resolve all pool and market IDs dynamically
-   - Verify addresses exist on-chain
+   - Connect to multi-RPC endpoints with automatic failover
+   - Validate USDC coin type (native vs wrapped) with ALLOW_WRAPPED_USDC guard
+   - Use resolver module (src/resolve.ts) to discover pool IDs dynamically:
+     - Query Cetus and Turbos SDKs for SUI/USDC 0.05% fee tier pools
+     - Extract coin ordering (which is A, which is B) from pool types
+     - Verify all pool IDs exist on-chain
+     - Cache resolved metadata (poolId, coinTypes, sqrtPrice, liquidity)
+   - Verify package IDs and critical objects
    
 2. **Monitoring Loop**:
-   - Fetch executable quotes at configured size from both DEXes
-   - Calculate spread from actual sqrtPrice in pool state
+   - Fetch executable quotes at configured flashloan size from both DEXes
+   - Calculate price from actual sqrtPrice with proper coin ordering
+   - Apply sanity checks: reject prices outside 0.01-5.0 USDC/SUI range
    - Require 2 consecutive intervals above MIN_SPREAD_PERCENT
    
-3. **Execution** (when spread detected):
+3. **Pre-Execution Validation**:
+   - Get real quotes from both DEXes at actual trade size
+   - Verify quote outputs are valid (not zero/negative)
+   - Calculate total costs: flashloan fee + 2 swap fees + slippage
+   - Ensure second swap output covers repay + minProfit
+   - Reject opportunity early if validation fails
+   
+4. **Execution** (when validated):
    - Borrow USDC via Suilend flashloan (Navi fallback)
-   - Swap USDC→SUI on cheaper DEX (with min_out and sqrt_price_limit)
-   - Swap SUI→USDC on expensive DEX (with min_out ≥ repay + profit)
+   - Build first swap using integration module:
+     - Determine correct a2b direction based on pool coin ordering
+     - Apply min_out with slippage protection
+     - Set sqrt_price_limit from quote
+   - Build second swap:
+     - Set min_out = repayAmount + minProfit (hard requirement)
+     - Use quote-derived sqrt_price_limit
    - Split coins: repay exact amount, send profit to wallet
    - All in single atomic PTB
    
-4. **Safety Checks**:
-   - Verify both quotes meet slippage requirements
-   - Ensure second swap output covers repay + min profit
+5. **Safety Checks Throughout**:
+   - Price sanity: 0.01 ≤ price ≤ 5.0 USDC/SUI
+   - Quote validity: output > 0
+   - Profitability: secondSwap.out ≥ repay + minProfit
+   - Slippage: both swaps protected with limits
    - Rate limit: 1 tx per 3s, max 5 pending
-   - Kill switch after 3 consecutive failures
+   - Kill switch: after 3 consecutive failures
 
 ### Key Design Decisions
 
+- **Native USDC First**: Default to native USDC with explicit guard against wrapped tokens
+- **Pre-Execution Validation**: Validate opportunities with real quotes before building PTBs
+- **Coin Ordering Aware**: Automatically handle different coin orderings in pools (SUI/USDC vs USDC/SUI)
+- **Price Sanity Checks**: Reject implausible prices (< $0.01 or > $5.00 per SUI) to prevent errors
 - **BigInt Throughout**: No Number conversions to prevent precision loss
-- **Dynamic Resolution**: Pool IDs fetched at startup, not hardcoded
-- **Real Quotes**: Calculate from actual sqrtPrice, not mocked
+- **Dynamic Resolution**: Pool IDs discovered at startup using SDKs, not hardcoded
+- **Real Quotes**: Calculate from actual sqrtPrice with proper decimal adjustments
+- **Quote-Based Execution**: Use SDK quote results for min_out and sqrt_price_limit values
 - **Multi-RPC**: Automatic failover for reliability
 - **Atomic PTBs**: All-or-nothing execution
 - **Structured Logging**: JSON events for monitoring/alerting
