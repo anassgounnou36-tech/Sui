@@ -1,7 +1,7 @@
 {
   "name": "sui-flashloan-arbitrage-bot",
   "version": "1.0.0",
-  "description": "Sui Mainnet flashloan arbitrage bot for spot-to-spot arbitrage between Cetus and Turbos",
+  "description": "Sui Mainnet flashloan arbitrage bot for Cetus fee-tier arbitrage (0.05% vs 0.25%)",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc",
@@ -21,7 +21,7 @@
     "flashloan",
     "arbitrage",
     "cetus",
-    "turbos",
+    "fee-tier",
     "suilend"
   ],
   "author": "",

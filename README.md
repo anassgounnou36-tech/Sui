@@ -1,21 +1,32 @@
 # Sui Flashloan Arbitrage Bot
 
-A production-ready TypeScript bot that performs atomic spot-to-spot arbitrage on Sui Mainnet, using Suilend flashloans (with Navi as fallback). Supports two strategies:
-1. **CETUS_TURBOS**: Arbitrage between Cetus and Turbos DEXes using native USDC
-2. **CETUS_FEE_TIER_ARB**: Intra-Cetus arbitrage between 0.05% and 0.25% fee tier pools using SUI flashloans and bridged USDC
+A production-ready TypeScript bot that performs atomic arbitrage on Sui Mainnet using Suilend flashloans. The bot executes intra-Cetus arbitrage between different fee tier pools (0.05% vs 0.25%).
+
+## Default Strategy
+
+**Cetus Fee-Tier Arbitrage**: Exploits price differences between Cetus 0.05% and 0.25% fee tier pools using SUI flashloans and bridged USDC.
+
+### How It Works
+1. Borrow SUI via Suilend flashloan (0.05% fee)
+2. Swap SUI → USDC on one Cetus pool (either 0.05% or 0.25% tier)
+3. Swap USDC → SUI on the other Cetus pool
+4. Repay flashloan with profit
+
+### Key Features
+- **SUI Flashloans**: Uses SUI as the flashloan asset with dynamic reserve discovery
+- **Bridged USDC Pools**: Operates on Circle's legacy bridged USDC (`0xdba34672...::usdc::USDC`)
+- **Strict Type Verification**: Raw RPC-based verification to avoid SDK ticker ambiguity
+- **No MODE Required**: Defaults to fee-tier arbitrage (previous MODE environment variable is deprecated)
 
 ## Features
 
 ### Core Functionality
 - **Atomic Transactions**: All operations in a single Programmable Transaction Block (PTB)
 - **Flashloan Funded**: Uses Suilend flashloans (0.05% fee) with automatic Navi fallback (0.06%)
-  - **SUI Flashloans**: Supported for CETUS_FEE_TIER_ARB mode with dynamic reserve discovery
-  - **USDC Flashloans**: Default for CETUS_TURBOS mode
-- **Multi-Strategy Arbitrage**: 
-  - Cross-DEX: Real-time price monitoring between Cetus and Turbos CLMM pools
-  - Fee-Tier: Intra-Cetus arbitrage exploiting price differences between 0.05% and 0.25% fee pools
+  - **SUI Flashloans**: Default with dynamic reserve discovery
+- **Cetus Fee-Tier Arbitrage**: Real-time price monitoring between 0.05% and 0.25% fee pools
 - **Real SDK Integration**: Uses actual pool state and sqrtPrice calculations from on-chain data
-- **Strict Coin Type Verification**: Raw RPC-based verification to avoid SDK ticker ambiguity
+- **Strict Coin Type Verification**: Raw RPC-based verification to prevent incorrect USDC types
 
 ### Safety & Risk Management
 - **Multi-RPC Failover**: Automatic failover between 3 RPC endpoints for reliability
@@ -64,30 +75,12 @@ nano .env
 
 The bot uses environment variables for configuration. See `.env.example` for all available options.
 
-### Strategy Modes
+### Default Strategy: Cetus Fee-Tier Arbitrage
 
-The bot supports two arbitrage strategies:
+The bot is configured by default for intra-Cetus arbitrage between 0.05% and 0.25% fee tier pools using SUI flashloans and bridged USDC.
 
-#### 1. CETUS_TURBOS (Default)
-Cross-DEX arbitrage between Cetus and Turbos pools using native USDC flashloans.
-
+**Configuration:**
 ```env
-MODE=CETUS_TURBOS
-FLASHLOAN_ASSET=USDC
-USDC_COIN_TYPE=0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN
-```
-
-#### 2. CETUS_FEE_TIER_ARB
-Intra-Cetus arbitrage between 0.05% and 0.25% fee tier pools using SUI flashloans and bridged USDC.
-
-**Key Differences:**
-- Uses **SUI flashloans** instead of USDC (Suilend reserve index discovered dynamically)
-- Operates on **bridged USDC** pools (Circle's legacy bridge: `0xdba34672...::usdc::USDC`)
-- Uses **raw RPC type verification** to avoid SDK ticker ambiguity
-- Bypasses Turbos pools entirely
-
-```env
-MODE=CETUS_FEE_TIER_ARB
 FLASHLOAN_ASSET=SUI
 FLASHLOAN_AMOUNT=10000000000  # 10 SUI (9 decimals)
 BRIDGED_USDC_COIN_TYPE=0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC
@@ -95,9 +88,22 @@ CETUS_POOL_ID_005=0x51e883ba7c0b566a26cbc8a94cd33eb0abd418a77cc1e60ad22fd9b1f29c
 CETUS_POOL_ID_025=0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105
 ```
 
+**Key Features:**
+- Uses **SUI flashloans** (Suilend reserve index discovered dynamically, typically 0)
+- Operates on **bridged USDC** pools (Circle's legacy bridge: `0xdba34672...::usdc::USDC`)
+- Uses **raw RPC type verification** to avoid SDK ticker ambiguity
+- **No MODE variable needed** - fee-tier arbitrage is the default behavior
+
 **Important:** Pool coin types are strictly verified via RPC `sui_getObject` with type parsing. The bot will hard fail if:
 - Wormhole USDC (`0x5d4b3025...`) is detected
 - Native USDC (`0xaf8cd...`) is found (expected bridged USDC only)
+
+### Troubleshooting
+
+If you see an error mentioning `0x5d4b30...` (Wormhole USDC):
+1. Ensure `CETUS_POOL_ID_005` and `CETUS_POOL_ID_025` target bridged USDC pools
+2. Set `BRIDGED_USDC_COIN_TYPE=0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC`
+3. Remove any `USDC_COIN_TYPE` or `ALLOW_WRAPPED_USDC` settings (deprecated)
 
 ### Essential Configuration
 
@@ -111,12 +117,9 @@ SUI_RPC_MAINNET_FALLBACK=https://sui.rpc.grove.city/v1/01fdb492
 PRIVATE_KEY=your_private_key_here  # Supports hex (with/without 0x) or base64
 WALLET_ADDRESS=0x_your_wallet_address_here
 
-# Strategy Selection
-MODE=CETUS_TURBOS  # or CETUS_FEE_TIER_ARB
-
-# Flashloan Configuration
-FLASHLOAN_ASSET=USDC  # or SUI for fee-tier arbitrage
-FLASHLOAN_AMOUNT=10000000  # 10 USDC (6 decimals) or 10000000000 for 10 SUI (9 decimals)
+# Flashloan Configuration (Default: SUI for fee-tier arbitrage)
+FLASHLOAN_ASSET=SUI
+FLASHLOAN_AMOUNT=10000000000  # 10 SUI (9 decimals)
 
 # Start small for testing!
 MIN_PROFIT_USDC=0.1        # Minimum profit: $0.10
