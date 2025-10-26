@@ -1,13 +1,13 @@
-import { logger } from './logger';
-import { config, smallestUnitToUsdc } from './config';
-import { COIN_TYPES } from './addresses';
-import { buildTransaction, signAndExecuteTransaction } from './utils/sui';
-import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi } from './flashloan';
-import { quoteCetusSwapB2A, quoteCetusSwapA2B, buildCetusSwap } from './cetusIntegration';
-import { quoteTurbosSwapB2A, quoteTurbosSwapA2B, buildTurbosSwap } from './turbosIntegration';
-import { getResolvedAddresses } from './resolve';
-import { calculateMinOut } from './slippage';
-import Decimal from 'decimal.js';
+import { logger } from './logger.js';
+import { config, smallestUnitToUsdc } from './config.js';
+import { COIN_TYPES } from './addresses.js';
+import { buildTransaction, signAndExecuteTransaction } from './utils/sui.js';
+import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi } from './flashloan.js';
+import { quoteCetusSwapB2A, quoteCetusSwapA2B, buildCetusSwap } from './cetusIntegration.js';
+import { quoteTurbosSwapB2A, quoteTurbosSwapA2B, buildTurbosSwap } from './turbosIntegration.js';
+import { getResolvedAddresses } from './resolve.js';
+import { calculateMinOut } from './slippage.js';
+import { Decimal } from 'decimal.js';
 
 export type ArbDirection = 'cetus-to-turbos' | 'turbos-to-cetus';
 

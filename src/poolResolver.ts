@@ -5,7 +5,7 @@
  */
 
 import { SuiClient } from '@mysten/sui/client';
-import { logger } from './logger';
+import { logger } from './logger.js';
 
 /**
  * Resolved pool and market information

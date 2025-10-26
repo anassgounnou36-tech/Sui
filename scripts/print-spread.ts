@@ -1,8 +1,8 @@
-import { config } from '../src/config';
-import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
-import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
-import { getCetusPrice, getCetusPoolInfo } from '../src/cetusIntegration';
-import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbosIntegration';
+import { config } from '../src/config.js';
+import { initializeRpcClient, getSuiClient } from '../src/utils/sui.js';
+import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve.js';
+import { getCetusPrice, getCetusPoolInfo } from '../src/cetusIntegration.js';
+import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbosIntegration.js';
 
 /**
  * Calculate spread percentage between two prices

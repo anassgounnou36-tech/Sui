@@ -1,4 +1,4 @@
-import { config } from './config';
+import { config } from './config.js';
 
 /**
  * Calculate minimum output amount with slippage protection

@@ -1,12 +1,12 @@
-import { config, validateConfig, smallestUnitToUsdc, usdcToSmallestUnit } from './config';
-import { logger } from './logger';
-import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
-import { runStartupVerification } from './verify';
-import { resolvePoolAddresses } from './resolve';
-import { getCetusPrice } from './cetusIntegration';
-import { getTurbosPrice } from './turbosIntegration';
-import { executeFlashloanArb, ArbDirection } from './executor';
-import { COIN_TYPES } from './addresses';
+import { config, validateConfig, smallestUnitToUsdc, usdcToSmallestUnit } from './config.js';
+import { logger } from './logger.js';
+import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui.js';
+import { runStartupVerification } from './verify.js';
+import { resolvePoolAddresses } from './resolve.js';
+import { getCetusPrice } from './cetusIntegration.js';
+import { getTurbosPrice } from './turbosIntegration.js';
+import { executeFlashloanArb, ArbDirection } from './executor.js';
+import { COIN_TYPES } from './addresses.js';
 
 // State tracking
 let lastExecutionTime = 0;

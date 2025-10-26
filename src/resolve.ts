@@ -5,9 +5,9 @@
  */
 
 import { SuiClient } from '@mysten/sui/client';
-import { logger } from './logger';
-import { COIN_TYPES } from './addresses';
-import Decimal from 'decimal.js';
+import { logger } from './logger.js';
+import { COIN_TYPES } from './addresses.js';
+import { Decimal } from 'decimal.js';
 
 /**
  * Resolved pool and market information with full metadata

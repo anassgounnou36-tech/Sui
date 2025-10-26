@@ -1,8 +1,8 @@
-import { getSuiClient, objectExists } from './utils/sui';
-import { logger } from './logger';
-import { SUILEND, NAVI, CETUS, TURBOS, COIN_TYPES, validateUsdcCoinType } from './addresses';
-import { config } from './config';
-import { getResolvedAddresses } from './resolve';
+import { getSuiClient, objectExists } from './utils/sui.js';
+import { logger } from './logger.js';
+import { SUILEND, NAVI, CETUS, TURBOS, COIN_TYPES, validateUsdcCoinType } from './addresses.js';
+import { config } from './config.js';
+import { getResolvedAddresses } from './resolve.js';
 
 interface VerificationResult {
   success: boolean;

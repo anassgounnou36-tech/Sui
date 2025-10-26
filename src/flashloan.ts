@@ -1,8 +1,8 @@
 import { Transaction } from '@mysten/sui/transactions';
-import { logger } from './logger';
-import { config } from './config';
-import { SUILEND, NAVI } from './addresses';
-import { sleep } from './utils/sui';
+import { logger } from './logger.js';
+import { config } from './config.js';
+import { SUILEND, NAVI } from './addresses.js';
+import { sleep } from './utils/sui.js';
 
 /**
  * Borrow coins from Suilend flashloan

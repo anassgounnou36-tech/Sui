@@ -2,6 +2,7 @@
   "name": "sui-flashloan-arbitrage-bot",
   "version": "1.0.0",
   "description": "Sui Mainnet flashloan arbitrage bot for spot-to-spot arbitrage between Cetus and Turbos",
+  "type": "module",
   "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc",
@@ -12,7 +13,8 @@
     "test": "echo \"Placeholder: No tests yet\" && exit 0",
     "typecheck": "tsc --noEmit",
     "spread": "node dist/scripts/print-spread.js",
-    "simulate": "node dist/scripts/simulate.js"
+    "simulate": "node dist/scripts/simulate.js",
+    "find-pools": "node dist/scripts/find-pools.js"
   },
   "keywords": [
     "sui",
@@ -28,9 +30,9 @@
     "@cetusprotocol/cetus-sui-clmm-sdk": "^5.4.0",
     "@mysten/sui": "^1.5.0",
     "axios": "^1.6.0",
-    "decimal.js": "^10.6.0",
+    "decimal.js": "^10.4.3",
     "dotenv": "^16.4.0",
-    "turbos-clmm-sdk": "^3.6.0"
+    "turbos-clmm-sdk": "^3.6.4"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

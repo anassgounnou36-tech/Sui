@@ -1,10 +1,10 @@
-import { config } from '../src/config';
-import { initializeRpcClient } from '../src/utils/sui';
-import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
-import { quoteCetusSwapB2A, quoteCetusSwapA2B } from '../src/cetusIntegration';
-import { quoteTurbosSwapB2A, quoteTurbosSwapA2B } from '../src/turbosIntegration';
-import { SUILEND } from '../src/addresses';
-import { calculateMinOut } from '../src/slippage';
+import { config } from '../src/config.js';
+import { initializeRpcClient } from '../src/utils/sui.js';
+import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve.js';
+import { quoteCetusSwapB2A, quoteCetusSwapA2B } from '../src/cetusIntegration.js';
+import { quoteTurbosSwapB2A, quoteTurbosSwapA2B } from '../src/turbosIntegration.js';
+import { SUILEND } from '../src/addresses.js';
+import { calculateMinOut } from '../src/slippage.js';
 
 /**
  * Simulate the complete arbitrage PTB

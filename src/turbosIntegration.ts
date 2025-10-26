@@ -3,13 +3,13 @@
  * Provides price quotes and swap operations using the Turbos CLMM SDK
  */
 
-import { getSuiClient } from './utils/sui';
-import { logger } from './logger';
-import { TURBOS, COIN_TYPES } from './addresses';
-import { config } from './config';
-import { getResolvedAddresses, calculatePriceFromSqrtPrice, validatePrice } from './resolve';
+import { getSuiClient } from './utils/sui.js';
+import { logger } from './logger.js';
+import { TURBOS, COIN_TYPES } from './addresses.js';
+import { config } from './config.js';
+import { getResolvedAddresses, calculatePriceFromSqrtPrice, validatePrice } from './resolve.js';
 import { Transaction } from '@mysten/sui/transactions';
-import Decimal from 'decimal.js';
+import { Decimal } from 'decimal.js';
 
 // Price and quote cache
 interface PriceCache {

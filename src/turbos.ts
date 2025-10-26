@@ -1,7 +1,7 @@
-import { getSuiClient } from './utils/sui';
-import { logger } from './logger';
-import { TURBOS } from './addresses';
-import { config } from './config';
+import { getSuiClient } from './utils/sui.js';
+import { logger } from './logger.js';
+import { TURBOS } from './addresses.js';
+import { config } from './config.js';
 
 // Simple price cache
 interface PriceCache {

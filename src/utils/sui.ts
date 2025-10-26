@@ -2,8 +2,8 @@ import { SuiClient } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { fromB64 } from '@mysten/sui/utils';
-import { config, normalizePrivateKey } from '../config';
-import { logger } from '../logger';
+import { config, normalizePrivateKey } from '../config.js';
+import { logger } from '../logger.js';
 
 let suiClient: SuiClient | null = null;
 let keypair: Ed25519Keypair | null = null;
