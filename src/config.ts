@@ -33,6 +33,9 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
 // Strategy mode type
 export type StrategyMode = 'CETUS_TURBOS' | 'CETUS_FEE_TIER_ARB';
 
+// Flashloan asset type
+export type FlashloanAsset = 'SUI' | 'USDC';
+
 // Configuration constants
 export const config = {
   // Strategy mode
@@ -58,7 +61,8 @@ export const config = {
   walletAddress: getEnvString('WALLET_ADDRESS', ''),
 
   // Flashloan Configuration
-  flashloanAmount: getEnvNumber('FLASHLOAN_AMOUNT', 10_000_000), // 10 USDC (6 decimals)
+  flashloanAsset: getEnvString('FLASHLOAN_ASSET', 'USDC') as FlashloanAsset,
+  flashloanAmount: getEnvNumber('FLASHLOAN_AMOUNT', 10_000_000), // 10 USDC (6 decimals) or 10 SUI (9 decimals)
   maxFlashloanUsdc: getEnvNumber('MAX_FLASHLOAN_USDC', 5_000_000), // 5M USDC max
 
   // Safety confirmation for large amounts
@@ -116,6 +120,18 @@ export function validateConfig(): void {
     );
   }
 
+  // Validate flashloan asset
+  if (config.flashloanAsset !== 'SUI' && config.flashloanAsset !== 'USDC') {
+    throw new Error(
+      `Invalid FLASHLOAN_ASSET: ${config.flashloanAsset}. Must be SUI or USDC`
+    );
+  }
+
+  // Default to SUI for CETUS_FEE_TIER_ARB mode
+  if (config.mode === 'CETUS_FEE_TIER_ARB' && config.flashloanAsset === 'USDC') {
+    console.warn('Warning: CETUS_FEE_TIER_ARB mode defaults to SUI flashloan. Consider setting FLASHLOAN_ASSET=SUI');
+  }
+
   if (!config.dryRun) {
     if (!config.privateKey || config.privateKey === 'your_private_key_here') {
       throw new Error('PRIVATE_KEY must be set for live trading');
@@ -133,8 +149,10 @@ export function validateConfig(): void {
     console.warn('Warning: MIN_SPREAD_PERCENT < 0.1% may result in unprofitable trades after fees');
   }
 
-  if (config.flashloanAmount < 1_000_000) {
-    console.warn('Warning: FLASHLOAN_AMOUNT is very low (<1 USDC)');
+  // Validate flashloan amount based on asset type
+  const minAmount = config.flashloanAsset === 'SUI' ? 1_000_000_000 : 1_000_000; // 1 SUI or 1 USDC
+  if (config.flashloanAmount < minAmount) {
+    console.warn(`Warning: FLASHLOAN_AMOUNT is very low (<1 ${config.flashloanAsset})`);
   }
 
   // Safety check for large flashloan amounts

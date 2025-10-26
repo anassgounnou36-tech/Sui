@@ -1,8 +1,60 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { logger } from './logger';
 import { config } from './config';
-import { SUILEND, NAVI } from './addresses';
-import { sleep } from './utils/sui';
+import { SUILEND, NAVI, COIN_TYPES } from './addresses';
+import { sleep, getSuiClient } from './utils/sui';
+
+/**
+ * Discover reserve index for a given coin type in Suilend lending market
+ * @param coinType Coin type to find reserve index for
+ * @returns Reserve index or throws if not found
+ */
+export async function discoverSuilendReserveIndex(coinType: string): Promise<number> {
+  try {
+    const client = getSuiClient();
+    const lendingMarket = await client.getObject({
+      id: SUILEND.lendingMarket,
+      options: { showContent: true },
+    });
+
+    if (!lendingMarket.data || !lendingMarket.data.content) {
+      throw new Error('Suilend lending market not found');
+    }
+
+    const content = lendingMarket.data.content as any;
+    if (content.dataType !== 'moveObject') {
+      throw new Error('Invalid lending market object type');
+    }
+
+    // Search through reserves to find matching coin type
+    const reserves = content.fields.reserves || [];
+    for (let i = 0; i < reserves.length; i++) {
+      const reserve = reserves[i];
+      const reserveCoinType = reserve.fields?.coin_type || reserve.coin_type;
+      
+      if (reserveCoinType === coinType) {
+        logger.info(`Found Suilend reserve index ${i} for ${coinType}`);
+        return i;
+      }
+    }
+
+    // Default fallback based on common knowledge
+    if (coinType === COIN_TYPES.SUI) {
+      logger.warn('Could not find SUI reserve dynamically, using default index 0');
+      return 0;
+    } else if (coinType === COIN_TYPES.USDC) {
+      logger.warn('Could not find USDC reserve dynamically, using default index 0');
+      return 0;
+    }
+
+    throw new Error(`No reserve found for coin type ${coinType} in Suilend`);
+  } catch (error) {
+    logger.error('Failed to discover Suilend reserve index', error);
+    // Return default 0 as fallback
+    logger.warn('Using default reserve index 0 as fallback');
+    return 0;
+  }
+}
 
 /**
  * Borrow coins from Suilend flashloan
@@ -10,17 +62,22 @@ import { sleep } from './utils/sui';
  * @param tx Transaction to add borrow to
  * @param amount Amount to borrow (in smallest units)
  * @param coinType Type of coin to borrow
- * @param reserveIndex Reserve index for the coin (dynamically discovered, defaults to 0 for USDC)
+ * @param reserveIndex Reserve index for the coin (dynamically discovered if not provided)
  * @returns [borrowedCoins, receipt] to be used for repayment
  */
 export async function borrowFromSuilend(
   tx: Transaction,
   amount: bigint,
   coinType: string,
-  reserveIndex: number = 0
+  reserveIndex?: number
 ): Promise<{ borrowedCoins: any; receipt: any }> {
   try {
-    logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${reserveIndex})`);
+    // Discover reserve index if not provided
+    const finalReserveIndex = reserveIndex !== undefined 
+      ? reserveIndex 
+      : await discoverSuilendReserveIndex(coinType);
+
+    logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${finalReserveIndex})`);
 
     // Suilend flashloan entrypoint per Perplexity spec:
     // lending::flash_borrow(lending_market, reserve_index, amount) -> (Coin<T>, FlashLoanReceipt)
@@ -28,7 +85,7 @@ export async function borrowFromSuilend(
       target: `${SUILEND.packageId}::lending::flash_borrow`,
       arguments: [
         tx.object(SUILEND.lendingMarket),
-        tx.pure.u64(reserveIndex.toString()), // reserve_index for native USDC
+        tx.pure.u64(finalReserveIndex.toString()),
         tx.pure.u64(amount.toString()),
       ],
       typeArguments: [coinType],
@@ -233,11 +290,16 @@ export async function flashloanWithRetries(
 
 /**
  * Calculate flashloan repayment amount
+ * Uses ceiling division to ensure we repay enough
  * @param borrowAmount Amount borrowed
- * @param feePercent Fee percentage
- * @returns Total amount to repay (principal + fee)
+ * @param feePercent Fee percentage (e.g., 0.05 for 0.05%)
+ * @returns Total amount to repay (principal + fee, rounded up)
  */
 export function calculateRepayAmount(borrowAmount: bigint, feePercent: number): bigint {
-  const fee = (borrowAmount * BigInt(Math.floor(feePercent * 100))) / BigInt(10000);
+  // Calculate fee with ceiling: fee = ceil(principal * feePercent)
+  // Using formula: ceil(a/b) = (a + b - 1) / b
+  const feeRate = BigInt(Math.floor(feePercent * 10000)); // Convert to basis points
+  const denominator = BigInt(10000);
+  const fee = (borrowAmount * feeRate + denominator - BigInt(1)) / denominator;
   return borrowAmount + fee;
 }

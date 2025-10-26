@@ -1,15 +1,21 @@
 # Sui Flashloan Arbitrage Bot
 
-A production-ready TypeScript bot that performs atomic spot-to-spot arbitrage between Cetus and Turbos DEXes on Sui Mainnet, using Suilend flashloans (with Navi as fallback).
+A production-ready TypeScript bot that performs atomic spot-to-spot arbitrage on Sui Mainnet, using Suilend flashloans (with Navi as fallback). Supports two strategies:
+1. **CETUS_TURBOS**: Arbitrage between Cetus and Turbos DEXes using native USDC
+2. **CETUS_FEE_TIER_ARB**: Intra-Cetus arbitrage between 0.05% and 0.25% fee tier pools using SUI flashloans and bridged USDC
 
 ## Features
 
 ### Core Functionality
 - **Atomic Transactions**: All operations in a single Programmable Transaction Block (PTB)
 - **Flashloan Funded**: Uses Suilend flashloans (0.05% fee) with automatic Navi fallback (0.06%)
-- **Multi-DEX Arbitrage**: Real-time price monitoring between Cetus and Turbos CLMM pools
+  - **SUI Flashloans**: Supported for CETUS_FEE_TIER_ARB mode with dynamic reserve discovery
+  - **USDC Flashloans**: Default for CETUS_TURBOS mode
+- **Multi-Strategy Arbitrage**: 
+  - Cross-DEX: Real-time price monitoring between Cetus and Turbos CLMM pools
+  - Fee-Tier: Intra-Cetus arbitrage exploiting price differences between 0.05% and 0.25% fee pools
 - **Real SDK Integration**: Uses actual pool state and sqrtPrice calculations from on-chain data
-- **Native USDC Support**: Uses native mainnet USDC (6 decimals)
+- **Strict Coin Type Verification**: Raw RPC-based verification to avoid SDK ticker ambiguity
 
 ### Safety & Risk Management
 - **Multi-RPC Failover**: Automatic failover between 3 RPC endpoints for reliability
@@ -18,6 +24,7 @@ A production-ready TypeScript bot that performs atomic spot-to-spot arbitrage be
 - **Kill Switch**: Automatic shutdown after 3 consecutive failed executions
 - **BigInt Math**: All calculations use BigInt to prevent precision loss
 - **Live Confirmation**: Safety check prevents accidental large-amount executions (>100k USDC)
+- **Coin Type Guards**: Hard fails on incorrect USDC types (Wormhole vs native vs bridged)
 
 ### Operational Features
 - **Dynamic Pool Resolution**: Automatically discovers and verifies pool IDs at startup
@@ -57,6 +64,41 @@ nano .env
 
 The bot uses environment variables for configuration. See `.env.example` for all available options.
 
+### Strategy Modes
+
+The bot supports two arbitrage strategies:
+
+#### 1. CETUS_TURBOS (Default)
+Cross-DEX arbitrage between Cetus and Turbos pools using native USDC flashloans.
+
+```env
+MODE=CETUS_TURBOS
+FLASHLOAN_ASSET=USDC
+USDC_COIN_TYPE=0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN
+```
+
+#### 2. CETUS_FEE_TIER_ARB
+Intra-Cetus arbitrage between 0.05% and 0.25% fee tier pools using SUI flashloans and bridged USDC.
+
+**Key Differences:**
+- Uses **SUI flashloans** instead of USDC (Suilend reserve index discovered dynamically)
+- Operates on **bridged USDC** pools (Circle's legacy bridge: `0xdba34672...::usdc::USDC`)
+- Uses **raw RPC type verification** to avoid SDK ticker ambiguity
+- Bypasses Turbos pools entirely
+
+```env
+MODE=CETUS_FEE_TIER_ARB
+FLASHLOAN_ASSET=SUI
+FLASHLOAN_AMOUNT=10000000000  # 10 SUI (9 decimals)
+BRIDGED_USDC_COIN_TYPE=0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC
+CETUS_POOL_ID_005=0x51e883ba7c0b566a26cbc8a94cd33eb0abd418a77cc1e60ad22fd9b1f29cd2ab
+CETUS_POOL_ID_025=0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105
+```
+
+**Important:** Pool coin types are strictly verified via RPC `sui_getObject` with type parsing. The bot will hard fail if:
+- Wormhole USDC (`0x5d4b3025...`) is detected
+- Native USDC (`0xaf8cd...`) is found (expected bridged USDC only)
+
 ### Essential Configuration
 
 ```env
@@ -69,8 +111,14 @@ SUI_RPC_MAINNET_FALLBACK=https://sui.rpc.grove.city/v1/01fdb492
 PRIVATE_KEY=your_private_key_here  # Supports hex (with/without 0x) or base64
 WALLET_ADDRESS=0x_your_wallet_address_here
 
+# Strategy Selection
+MODE=CETUS_TURBOS  # or CETUS_FEE_TIER_ARB
+
+# Flashloan Configuration
+FLASHLOAN_ASSET=USDC  # or SUI for fee-tier arbitrage
+FLASHLOAN_AMOUNT=10000000  # 10 USDC (6 decimals) or 10000000000 for 10 SUI (9 decimals)
+
 # Start small for testing!
-FLASHLOAN_AMOUNT=10000000  # 10 USDC (6 decimals)
 MIN_PROFIT_USDC=0.1        # Minimum profit: $0.10
 MIN_SPREAD_PERCENT=0.5     # Require 0.5% spread
 MAX_SLIPPAGE_PERCENT=1.0   # Max 1% slippage (hard cap)
@@ -100,37 +148,44 @@ DRY_RUN=false                   # Set to true for simulation mode
 
 The bot uses these mainnet addresses by default (can be overridden via env vars):
 
-- **Native USDC (Recommended)**: `0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN` (6 decimals)
+- **Native USDC (CETUS_TURBOS mode)**: `0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN` (6 decimals)
+- **Bridged USDC (CETUS_FEE_TIER_ARB mode)**: `0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC` (6 decimals)
 - **Wormhole USDC (NOT Recommended)**: `0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN` (6 decimals)
   - ⚠️ **WARNING**: Using Wormhole wrapped USDC requires setting `ALLOW_WRAPPED_USDC=true`. Native USDC is strongly recommended for arbitrage.
 - **SUI**: `0x2::sui::SUI` (9 decimals)
 - **Cetus CLMM**: `0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`
 - **Turbos CLMM**: `0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1`
 - **Suilend**: `0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85`
+  - Lending Market: `0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`
 - **Navi**: `0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42`
 
-**Pool Discovery**: Pool IDs for SUI/USDC pairs are resolved dynamically at startup. The resolver:
-- Discovers pools based on coin types (native USDC + SUI) and 0.05% fee tier
+**Pool Discovery**: Pool IDs are resolved dynamically at startup. The resolver:
+- **CETUS_TURBOS mode**: Discovers pools with native USDC + SUI at 0.05% fee tier
+- **CETUS_FEE_TIER_ARB mode**: Discovers pools with bridged USDC + SUI at 0.05% and 0.25% fee tiers
+- Uses **raw RPC `sui_getObject` with type parsing** to extract exact coin types
 - Validates coin ordering in pools (determines if SUI is coin A or B)
 - Extracts current sqrtPrice and liquidity for accurate quotes
 - Verifies all pool IDs exist on-chain before trading
-- Supports optional env overrides: `CETUS_SUI_USDC_POOL_ID` and `TURBOS_SUI_USDC_POOL_ID`
-- When overrides are provided, verifies they match SUI + native USDC and 0.05% fee
+- Supports optional env overrides: `CETUS_SUI_USDC_POOL_ID`, `TURBOS_SUI_USDC_POOL_ID`, `CETUS_POOL_ID_005`, `CETUS_POOL_ID_025`
 
-Use `npm run find-pools` to discover available SUI/native-USDC pools on both DEXes.
+**Discovery Scripts:**
+- `npm run find-pools` - Discover SUI/native-USDC pools on Cetus and Turbos (CETUS_TURBOS mode)
+- `npm run find-cetus-fee-pools` - Discover SUI/bridged-USDC pools at 0.05% and 0.25% fee tiers (CETUS_FEE_TIER_ARB mode)
 
 **Flashloan Entrypoints**: The bot uses the verified Move entrypoints:
 - **Suilend** (primary, 0.05% fee):
   - Borrow: `lending::flash_borrow(lending_market, reserve_index, amount)` → `(Coin<T>, FlashLoanReceipt)`
   - Repay: `lending::flash_repay(lending_market, reserve_index, Coin<T>, FlashLoanReceipt)`
-  - Reserve index 0 is typically native USDC (dynamically confirmed at runtime)
+  - Reserve index dynamically discovered at runtime for both SUI and USDC
 - **Navi** (fallback, 0.06% fee):
   - Borrow: `lending::flash_loan(storage, pool_id, amount, &Clock)` → `(Coin<T>, FlashLoanReceipt)`
   - Repay: `lending::repay_flash_loan(storage, pool_id, Coin<T>, FlashLoanReceipt)`
-  - Pool ID 3 is typically native USDC (dynamically confirmed at runtime)
+  - Pool ID dynamically confirmed at runtime
 
 **Swap Entrypoints**: The bot uses the verified Move entrypoints:
 - **Cetus**: `pool::swap(config, &mut Pool, Coin<A>, Coin<B>, a2b, by_amount_in, amount, amount_limit, sqrt_price_limit, &Clock)`
+  - Supports both USDC types (native and bridged) based on pool coin types
+  - Direction (`a2b`) determined from pool coin ordering
 - **Turbos**: `pool::swap_a_b` and `pool::swap_b_a` with parameters `(pool, coin_in, amount, amount_threshold, sqrt_price_limit, &Clock)`
 - Both enforce 1% max slippage via `amount_limit`/`amount_threshold` and `sqrt_price_limit` from SDK quotes
 
