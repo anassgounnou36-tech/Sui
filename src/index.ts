@@ -2,8 +2,8 @@ import { config, validateConfig, smallestUnitToUsdc, usdcToSmallestUnit } from '
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
 import { runStartupVerification } from './verify';
-import { resolvePoolAddresses } from './resolve';
-import { getCetusPrice } from './cetusIntegration';
+import { resolvePoolAddresses, getCetusPools } from './resolve';
+import { getCetusPrice, getCetusPriceByPool } from './cetusIntegration';
 import { getTurbosPrice } from './turbosIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';
 import { COIN_TYPES } from './addresses';
@@ -45,6 +45,28 @@ function determineArbDirection(cetusPrice: number, turbosPrice: number): ArbDire
 }
 
 /**
+ * Determine fee-tier arbitrage direction based on prices from two Cetus pools
+ */
+function determineFeeTierArbDirection(
+  price005: number,
+  price025: number
+): ArbDirection | null {
+  const spread = calculateSpread(price005, price025);
+
+  if (spread < config.minSpreadPercent) {
+    return null; // Spread too small
+  }
+
+  if (price005 < price025) {
+    // Buy on 0.05% (cheaper), sell on 0.25% (more expensive)
+    return 'cetus-005-to-025';
+  } else {
+    // Buy on 0.25% (cheaper), sell on 0.05% (more expensive)
+    return 'cetus-025-to-005';
+  }
+}
+
+/**
  * Check if we can execute based on rate limits
  */
 function canExecute(): boolean {
@@ -67,7 +89,135 @@ function canExecute(): boolean {
 }
 
 /**
- * Main monitoring loop iteration
+ * Fee-tier monitoring loop for CETUS_FEE_TIER_ARB mode
+ */
+async function feeTierMonitoringLoop() {
+  try {
+    // Fetch prices from both Cetus fee-tier pools
+    logger.debug('Fetching prices from Cetus 0.05% and 0.25% pools...');
+
+    const pools = getCetusPools();
+    const [price005, price025] = await Promise.all([
+      getCetusPriceByPool(pools.pool005),
+      getCetusPriceByPool(pools.pool025),
+    ]);
+
+    logger.info(
+      `Cetus 0.05%: ${price005.toFixed(6)} USDC/SUI | Cetus 0.25%: ${price025.toFixed(6)} USDC/SUI`
+    );
+
+    // Calculate spread
+    const spread = calculateSpread(price005, price025);
+    logger.info(`Fee-tier spread: ${spread.toFixed(4)}% (min: ${config.minSpreadPercent}%)`);
+
+    // Determine arbitrage direction
+    const direction = determineFeeTierArbDirection(price005, price025);
+
+    if (!direction) {
+      logger.debug('No profitable fee-tier arbitrage opportunity');
+      consecutiveSpreadCount = 0;
+      lastSpreadDirection = null;
+      return;
+    }
+
+    logger.info(`Potential fee-tier arbitrage direction: ${direction}`);
+
+    // Check for consecutive spread confirmation
+    if (lastSpreadDirection === direction) {
+      consecutiveSpreadCount++;
+      logger.info(`Consecutive spread count: ${consecutiveSpreadCount}`);
+    } else {
+      consecutiveSpreadCount = 1;
+      lastSpreadDirection = direction;
+    }
+
+    // Require 2 consecutive ticks with same direction
+    if (consecutiveSpreadCount < config.consecutiveSpreadRequired) {
+      logger.info('Waiting for confirmation (need 2 consecutive ticks)');
+      return;
+    }
+
+    // Check rate limits
+    if (!canExecute()) {
+      logger.debug('Rate limited, skipping execution');
+      return;
+    }
+
+    // Execute arbitrage
+    logger.info(`=== EXECUTING FEE-TIER ARBITRAGE: ${direction} ===`);
+    const flashloanAmount = BigInt(config.flashloanAmount);
+    const minProfit = usdcToSmallestUnit(config.minProfitUsdc);
+
+    pendingTransactions++;
+    lastExecutionTime = Date.now();
+    totalExecutions++;
+
+    const result = await executeFlashloanArb(direction, flashloanAmount, minProfit);
+
+    pendingTransactions--;
+
+    if (result.success) {
+      successfulExecutions++;
+      consecutiveFailures = 0; // Reset on success
+      const profitUsdc = result.profit ? smallestUnitToUsdc(result.profit) : 0;
+      totalProfitUsdc += profitUsdc;
+
+      logger.success(`✓ Fee-tier arbitrage successful!`);
+      logger.success(`  Profit: ${profitUsdc.toFixed(6)} USDC`);
+      if (result.txDigest) {
+        logger.success(`  TX: ${result.txDigest}`);
+      }
+      logger.info(
+        `Total P&L: ${totalProfitUsdc.toFixed(6)} USDC (${successfulExecutions}/${totalExecutions} successful)`
+      );
+
+      // Log trade event as JSON
+      logger.tradeEvent({
+        timestamp: new Date().toISOString(),
+        direction,
+        size: flashloanAmount.toString(),
+        minOut: minProfit.toString(),
+        provider: 'suilend',
+        repayAmount: flashloanAmount.toString(),
+        realizedProfit: result.profit?.toString(),
+        txDigest: result.txDigest,
+        status: 'success',
+      });
+
+      // Reset consecutive count after successful execution
+      consecutiveSpreadCount = 0;
+      lastSpreadDirection = null;
+    } else {
+      consecutiveFailures++;
+      logger.error(`✗ Fee-tier arbitrage failed: ${result.error}`);
+
+      // Log failed trade event
+      logger.tradeEvent({
+        timestamp: new Date().toISOString(),
+        direction,
+        size: flashloanAmount.toString(),
+        minOut: minProfit.toString(),
+        provider: 'suilend',
+        repayAmount: flashloanAmount.toString(),
+        status: 'failed',
+        error: result.error,
+      });
+
+      // Kill switch: Stop if too many consecutive failures
+      if (consecutiveFailures >= config.maxConsecutiveFailures) {
+        logger.error(
+          `KILL SWITCH ACTIVATED: ${consecutiveFailures} consecutive failures. Shutting down.`
+        );
+        process.exit(1);
+      }
+    }
+  } catch (error) {
+    logger.error('Error in fee-tier monitoring loop', error);
+  }
+}
+
+/**
+ * Main monitoring loop iteration for CETUS_TURBOS mode
  */
 async function monitoringLoop() {
   try {
@@ -216,7 +366,7 @@ async function main() {
 
     // Resolve pool addresses dynamically
     logger.info('Resolving pool addresses...');
-    await resolvePoolAddresses(client);
+    await resolvePoolAddresses(client, config.mode);
 
     // Initialize keypair (skip if dry run)
     if (!config.dryRun) {
@@ -250,22 +400,30 @@ async function main() {
 
     // Log configuration
     logger.info('Configuration:');
+    logger.info(`  Mode: ${config.mode}`);
     logger.info(`  Flashloan amount: ${smallestUnitToUsdc(BigInt(config.flashloanAmount))} USDC`);
     logger.info(`  Min profit: ${config.minProfitUsdc} USDC`);
     logger.info(`  Min spread: ${config.minSpreadPercent}%`);
     logger.info(`  Max slippage: ${config.maxSlippagePercent}%`);
     logger.info(`  Check interval: ${config.checkIntervalMs}ms`);
 
-    // Start monitoring loop
-    logger.info('Starting monitoring loop...');
+    // Start monitoring loop based on mode
+    const loopFunc =
+      config.mode === 'CETUS_FEE_TIER_ARB' ? feeTierMonitoringLoop : monitoringLoop;
+    const modeDesc =
+      config.mode === 'CETUS_FEE_TIER_ARB'
+        ? 'Cetus Fee-Tier Arbitrage'
+        : 'Cetus-Turbos Arbitrage';
+
+    logger.info(`Starting monitoring loop (${modeDesc})...`);
     logger.success('=== Bot is now running ===');
 
     // Initial check
-    await monitoringLoop();
+    await loopFunc();
 
     // Set up interval
     setInterval(async () => {
-      await monitoringLoop();
+      await loopFunc();
     }, config.checkIntervalMs);
 
     // Keep process alive
