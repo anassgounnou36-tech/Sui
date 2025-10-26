@@ -12,7 +12,8 @@
     "test": "echo \"Placeholder: No tests yet\" && exit 0",
     "typecheck": "tsc --noEmit",
     "spread": "node dist/scripts/print-spread.js",
-    "simulate": "node dist/scripts/simulate.js"
+    "simulate": "node dist/scripts/simulate.js",
+    "find-pools": "node dist/scripts/find-pools.js"
   },
   "keywords": [
     "sui",

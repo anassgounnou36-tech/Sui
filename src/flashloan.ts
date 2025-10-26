@@ -6,28 +6,35 @@ import { sleep } from './utils/sui';
 
 /**
  * Borrow coins from Suilend flashloan
+ * Per Perplexity spec: {SUILEND_CORE}::lending::flash_borrow(lending_market, reserve_index, amount u64) -> (Coin<T>, FlashLoanReceipt)
  * @param tx Transaction to add borrow to
  * @param amount Amount to borrow (in smallest units)
  * @param coinType Type of coin to borrow
+ * @param reserveIndex Reserve index for the coin (dynamically discovered, defaults to 0 for USDC)
  * @returns [borrowedCoins, receipt] to be used for repayment
  */
 export async function borrowFromSuilend(
   tx: Transaction,
   amount: bigint,
-  coinType: string
+  coinType: string,
+  reserveIndex: number = 0
 ): Promise<{ borrowedCoins: any; receipt: any }> {
   try {
-    logger.info(`Borrowing ${amount} of ${coinType} from Suilend`);
+    logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${reserveIndex})`);
 
-    // Suilend flashloan call structure (simplified)
-    // In production, use proper Suilend SDK integration
+    // Suilend flashloan entrypoint per Perplexity spec:
+    // lending::flash_borrow(lending_market, reserve_index, amount) -> (Coin<T>, FlashLoanReceipt)
     const [borrowedCoins, receipt] = tx.moveCall({
-      target: `${SUILEND.packageId}::lending::borrow_flash`,
-      arguments: [tx.object(SUILEND.lendingMarket), tx.pure.u64(amount.toString())],
+      target: `${SUILEND.packageId}::lending::flash_borrow`,
+      arguments: [
+        tx.object(SUILEND.lendingMarket),
+        tx.pure.u64(reserveIndex.toString()), // reserve_index for native USDC
+        tx.pure.u64(amount.toString()),
+      ],
       typeArguments: [coinType],
     });
 
-    logger.debug('Suilend borrow transaction added to PTB');
+    logger.debug('Suilend flash_borrow transaction added to PTB');
 
     return { borrowedCoins, receipt };
   } catch (error) {
@@ -38,29 +45,37 @@ export async function borrowFromSuilend(
 
 /**
  * Repay coins to Suilend flashloan
+ * Per Perplexity spec: {SUILEND_CORE}::lending::flash_repay(lending_market, reserve_index, Coin<T>, FlashLoanReceipt)
  * @param tx Transaction to add repay to
  * @param receipt Receipt from borrow
  * @param repayCoins Coins to repay
  * @param coinType Type of coin being repaid
+ * @param reserveIndex Reserve index for the coin (must match borrow)
  */
 export function repayToSuilend(
   tx: Transaction,
   receipt: any,
   repayCoins: any,
-  coinType: string
+  coinType: string,
+  reserveIndex: number = 0
 ): void {
   try {
-    logger.debug('Adding Suilend repay to PTB');
+    logger.debug('Adding Suilend flash_repay to PTB');
 
-    // Suilend flashloan repayment (simplified)
-    // In production, use proper Suilend SDK integration
+    // Suilend flashloan repayment per Perplexity spec:
+    // lending::flash_repay(lending_market, reserve_index, Coin<T>, FlashLoanReceipt)
     tx.moveCall({
-      target: `${SUILEND.packageId}::lending::repay_flash`,
-      arguments: [tx.object(SUILEND.lendingMarket), receipt, repayCoins],
+      target: `${SUILEND.packageId}::lending::flash_repay`,
+      arguments: [
+        tx.object(SUILEND.lendingMarket),
+        tx.pure.u64(reserveIndex.toString()),
+        repayCoins,
+        receipt,
+      ],
       typeArguments: [coinType],
     });
 
-    logger.debug('Suilend repay transaction added to PTB');
+    logger.debug('Suilend flash_repay transaction added to PTB');
   } catch (error) {
     logger.error('Failed to create Suilend repay transaction', error);
     throw error;
@@ -69,32 +84,36 @@ export function repayToSuilend(
 
 /**
  * Borrow coins from Navi Protocol (fallback)
+ * Per Perplexity spec: {NAVI_CORE}::lending::flash_loan(storage, pool_id u8, amount u64, &Clock) -> (Coin<T>, FlashLoanReceipt)
  * @param tx Transaction to add borrow to
  * @param amount Amount to borrow (in smallest units)
  * @param coinType Type of coin to borrow
+ * @param poolId Pool ID for the coin (dynamically discovered, defaults to 3 for USDC)
  * @returns [borrowedCoins, receipt] to be used for repayment
  */
 export async function borrowFromNavi(
   tx: Transaction,
   amount: bigint,
-  coinType: string
+  coinType: string,
+  poolId: number = 3
 ): Promise<{ borrowedCoins: any; receipt: any }> {
   try {
-    logger.info(`Borrowing ${amount} of ${coinType} from Navi (fallback)`);
+    logger.info(`Borrowing ${amount} of ${coinType} from Navi (pool ${poolId}, fallback)`);
 
-    // Navi flashloan call structure (simplified)
-    // In production, use proper Navi SDK integration
+    // Navi flashloan entrypoint per Perplexity spec:
+    // lending::flash_loan(storage, pool_id u8, amount u64, &Clock) -> (Coin<T>, FlashLoanReceipt)
     const [borrowedCoins, receipt] = tx.moveCall({
-      target: `${NAVI.packageId}::flash_loan::borrow_flash_loan`,
+      target: `${NAVI.packageId}::lending::flash_loan`,
       arguments: [
         tx.object(NAVI.storageId),
-        tx.pure.u8(0), // Pool index for USDC
+        tx.pure.u8(poolId), // Pool ID for native USDC (default 3)
         tx.pure.u64(amount.toString()),
+        tx.object('0x6'), // Clock object
       ],
       typeArguments: [coinType],
     });
 
-    logger.debug('Navi borrow transaction added to PTB');
+    logger.debug('Navi flash_loan transaction added to PTB');
 
     return { borrowedCoins, receipt };
   } catch (error) {
@@ -105,33 +124,37 @@ export async function borrowFromNavi(
 
 /**
  * Repay coins to Navi Protocol
+ * Per Perplexity spec: {NAVI_CORE}::lending::repay_flash_loan(storage, pool_id u8, Coin<T>, FlashLoanReceipt)
  * @param tx Transaction to add repay to
  * @param receipt Receipt from borrow
  * @param repayCoins Coins to repay
  * @param coinType Type of coin being repaid
+ * @param poolId Pool ID for the coin (must match borrow)
  */
 export function repayToNavi(
   tx: Transaction,
   receipt: any,
   repayCoins: any,
-  coinType: string
+  coinType: string,
+  poolId: number = 3
 ): void {
   try {
-    logger.debug('Adding Navi repay to PTB');
+    logger.debug('Adding Navi repay_flash_loan to PTB');
 
-    // Navi flashloan repayment (simplified)
+    // Navi flashloan repayment per Perplexity spec:
+    // lending::repay_flash_loan(storage, pool_id u8, Coin<T>, FlashLoanReceipt)
     tx.moveCall({
-      target: `${NAVI.packageId}::flash_loan::repay_flash_loan`,
+      target: `${NAVI.packageId}::lending::repay_flash_loan`,
       arguments: [
         tx.object(NAVI.storageId),
-        tx.pure.u8(0), // Pool index for USDC
-        receipt,
+        tx.pure.u8(poolId),
         repayCoins,
+        receipt,
       ],
       typeArguments: [coinType],
     });
 
-    logger.debug('Navi repay transaction added to PTB');
+    logger.debug('Navi repay_flash_loan transaction added to PTB');
   } catch (error) {
     logger.error('Failed to create Navi repay transaction', error);
     throw error;
