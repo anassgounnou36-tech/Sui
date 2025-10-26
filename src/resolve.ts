@@ -162,19 +162,21 @@ async function resolveCetusPool(client: SuiClient): Promise<{
 }
 
 /**
- * Resolve a specific Cetus pool by fee tier
+ * Resolve a specific Cetus pool by fee tier with strict RPC-based coin type verification
  * Helper function for CETUS_FEE_TIER_ARB mode
  * @param client SuiClient
  * @param feeTier Fee tier in basis points (e.g., 500 for 0.05%, 2500 for 0.25%)
  * @param envKey Environment variable key for override
  * @param defaultPoolId Default pool ID if no override
- * @returns Pool metadata
+ * @param mode Strategy mode to determine expected coin types
+ * @returns Pool metadata with coin ordering
  */
 async function resolveCetusPoolByFeeTier(
   client: SuiClient,
   feeTier: number,
   envKey: string,
-  defaultPoolId: string
+  defaultPoolId: string,
+  mode: string
 ): Promise<PoolMetadata> {
   const feePercent = (feeTier / 10000).toFixed(2);
   logger.info(`Resolving Cetus pool for ${feePercent}% fee tier...`);
@@ -187,7 +189,7 @@ async function resolveCetusPoolByFeeTier(
     logger.info(`Using env override for Cetus ${feePercent}% pool: ${poolId}`);
   }
 
-  // Verify pool exists and fetch metadata
+  // Verify pool exists and fetch metadata using raw RPC
   try {
     const poolObj = await client.getObject({
       id: poolId,
@@ -205,26 +207,61 @@ async function resolveCetusPoolByFeeTier(
 
     const fields = content.fields;
 
-    // Extract type arguments from pool type
+    // Extract type arguments from pool type using raw RPC type string
     const poolType = poolObj.data.type;
     if (!poolType) {
       throw new Error('Pool type not found');
     }
 
-    const typeMatch = poolType.match(/<([^,]+),\s*([^,]+)/);
+    // Use regex to extract Pool<CoinA, CoinB> type arguments
+    const typeMatch = poolType.match(/Pool<([^,]+),\s*([^>]+)>/);
     if (!typeMatch) {
       throw new Error(`Cannot parse pool type: ${poolType}`);
     }
 
     const [, coinTypeA, coinTypeB] = typeMatch;
 
-    // Verify this is SUI/USDC pool
-    const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
-    const hasUsdc = coinTypeA === COIN_TYPES.USDC || coinTypeB === COIN_TYPES.USDC;
+    // For CETUS_FEE_TIER_ARB mode, enforce bridged USDC + SUI
+    if (mode === 'CETUS_FEE_TIER_ARB') {
+      const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+      const hasBridgedUsdc = 
+        coinTypeA === COIN_TYPES.BRIDGED_USDC || coinTypeB === COIN_TYPES.BRIDGED_USDC;
 
-    if (!hasSui || !hasUsdc) {
-      const error = `Pool does not contain SUI + native USDC. Found: ${coinTypeA}, ${coinTypeB}`;
-      throw new Error(isOverride ? `Env override pool invalid: ${error}` : error);
+      // Hard fail on Wormhole USDC
+      if (coinTypeA.includes('5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf') ||
+          coinTypeB.includes('5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf')) {
+        throw new Error(
+          `Pool contains Wormhole USDC which is not supported for fee-tier arbitrage.\n` +
+          `Expected bridged USDC: ${COIN_TYPES.BRIDGED_USDC}\n` +
+          `Found: ${coinTypeA}, ${coinTypeB}`
+        );
+      }
+
+      // Hard fail on native USDC
+      if (coinTypeA.includes('af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5') ||
+          coinTypeB.includes('af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5')) {
+        throw new Error(
+          `Pool contains native USDC which is not supported for fee-tier arbitrage.\n` +
+          `Expected bridged USDC: ${COIN_TYPES.BRIDGED_USDC}\n` +
+          `Found: ${coinTypeA}, ${coinTypeB}`
+        );
+      }
+
+      if (!hasSui || !hasBridgedUsdc) {
+        const error = 
+          `Pool does not contain SUI + bridged USDC. Found: ${coinTypeA}, ${coinTypeB}.\n` +
+          `Expected: ${COIN_TYPES.SUI}, ${COIN_TYPES.BRIDGED_USDC}`;
+        throw new Error(isOverride ? `Env override pool invalid: ${error}` : error);
+      }
+    } else {
+      // For CETUS_TURBOS mode, verify SUI + native USDC
+      const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+      const hasUsdc = coinTypeA === COIN_TYPES.USDC || coinTypeB === COIN_TYPES.USDC;
+
+      if (!hasSui || !hasUsdc) {
+        const error = `Pool does not contain SUI + native USDC. Found: ${coinTypeA}, ${coinTypeB}`;
+        throw new Error(isOverride ? `Env override pool invalid: ${error}` : error);
+      }
     }
 
     // Verify fee tier matches
@@ -517,13 +554,15 @@ export async function resolvePoolAddresses(
           client,
           500, // 0.05%
           'CETUS_POOL_ID_005',
-          '0x51e883ba7c0b566a26cbc8a94cd33eb0abd418a77cc1e60ad22fd9b1f29cd2ab'
+          '0x51e883ba7c0b566a26cbc8a94cd33eb0abd418a77cc1e60ad22fd9b1f29cd2ab',
+          mode
         ),
         resolveCetusPoolByFeeTier(
           client,
           2500, // 0.25%
           'CETUS_POOL_ID_025',
-          '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105'
+          '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105',
+          mode
         ),
       ]);
 
@@ -575,17 +614,17 @@ export async function resolvePoolAddresses(
         throw new Error('Fee-tier pools not resolved for CETUS_FEE_TIER_ARB mode');
       }
 
-      // Validate coin types for both pools
+      // Validate coin types for both pools - should be bridged USDC + SUI
       const pool005CoinA = resolved.cetus.suiUsdcPool005.coinTypeA;
       const pool005CoinB = resolved.cetus.suiUsdcPool005.coinTypeB;
       const pool005HasSui =
         pool005CoinA === COIN_TYPES.SUI || pool005CoinB === COIN_TYPES.SUI;
-      const pool005HasUsdc =
-        pool005CoinA === COIN_TYPES.USDC || pool005CoinB === COIN_TYPES.USDC;
+      const pool005HasBridgedUsdc =
+        pool005CoinA === COIN_TYPES.BRIDGED_USDC || pool005CoinB === COIN_TYPES.BRIDGED_USDC;
 
-      if (!pool005HasSui || !pool005HasUsdc) {
+      if (!pool005HasSui || !pool005HasBridgedUsdc) {
         throw new Error(
-          `Cetus 0.05% pool invalid. Found: ${pool005CoinA}, ${pool005CoinB}`
+          `Cetus 0.05% pool invalid. Expected SUI + bridged USDC. Found: ${pool005CoinA}, ${pool005CoinB}`
         );
       }
 
@@ -593,12 +632,12 @@ export async function resolvePoolAddresses(
       const pool025CoinB = resolved.cetus.suiUsdcPool025.coinTypeB;
       const pool025HasSui =
         pool025CoinA === COIN_TYPES.SUI || pool025CoinB === COIN_TYPES.SUI;
-      const pool025HasUsdc =
-        pool025CoinA === COIN_TYPES.USDC || pool025CoinB === COIN_TYPES.USDC;
+      const pool025HasBridgedUsdc =
+        pool025CoinA === COIN_TYPES.BRIDGED_USDC || pool025CoinB === COIN_TYPES.BRIDGED_USDC;
 
-      if (!pool025HasSui || !pool025HasUsdc) {
+      if (!pool025HasSui || !pool025HasBridgedUsdc) {
         throw new Error(
-          `Cetus 0.25% pool invalid. Found: ${pool025CoinA}, ${pool025CoinB}`
+          `Cetus 0.25% pool invalid. Expected SUI + bridged USDC. Found: ${pool025CoinA}, ${pool025CoinB}`
         );
       }
     }

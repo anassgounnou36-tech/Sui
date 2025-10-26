@@ -12,11 +12,16 @@ const NATIVE_USDC = '0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bb
 // Wormhole wrapped USDC (legacy, not recommended)
 const WORMHOLE_USDC = '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN';
 
+// Bridged USDC (legacy/Circle bridged, used in some Cetus pools)
+const BRIDGED_USDC = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC';
+
 // Coin Types
 export const COIN_TYPES = {
   SUI: '0x2::sui::SUI',
   // Native USDC coin type (6 decimals) - mainnet
   USDC: getAddress('USDC_COIN_TYPE', NATIVE_USDC),
+  // Bridged USDC coin type for fee-tier arbitrage
+  BRIDGED_USDC: getAddress('BRIDGED_USDC_COIN_TYPE', BRIDGED_USDC),
   // Reference constants
   NATIVE_USDC,
   WORMHOLE_USDC,
@@ -146,4 +151,42 @@ export function validateUsdcCoinType(allowWrappedUsdc: boolean = false): void {
     console.warn(`⚠️  WARNING: Using custom USDC coin type: ${usdcType}`);
     console.warn('Ensure this is correct for your use case.');
   }
+}
+
+/**
+ * Validate that pool coin types match expected types for fee-tier arbitrage
+ * @param coinTypeA First coin type from pool
+ * @param coinTypeB Second coin type from pool
+ * @returns true if valid, throws error otherwise
+ */
+export function validateFeeTierPoolCoinTypes(
+  coinTypeA: string,
+  coinTypeB: string
+): boolean {
+  const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+  const hasBridgedUsdc = coinTypeA === BRIDGED_USDC || coinTypeB === BRIDGED_USDC;
+  
+  if (!hasSui || !hasBridgedUsdc) {
+    // Check for incorrect coin types
+    if (coinTypeA === WORMHOLE_USDC || coinTypeB === WORMHOLE_USDC) {
+      throw new Error(
+        `Pool contains Wormhole USDC (${WORMHOLE_USDC}) which is not supported for fee-tier arbitrage. ` +
+        `Expected bridged USDC: ${BRIDGED_USDC}`
+      );
+    }
+    
+    if (coinTypeA === NATIVE_USDC || coinTypeB === NATIVE_USDC) {
+      throw new Error(
+        `Pool contains native USDC (${NATIVE_USDC}) which is not the expected bridged USDC. ` +
+        `Expected bridged USDC: ${BRIDGED_USDC}`
+      );
+    }
+    
+    throw new Error(
+      `Pool does not contain SUI and bridged USDC. Found: ${coinTypeA}, ${coinTypeB}. ` +
+      `Expected: ${COIN_TYPES.SUI}, ${BRIDGED_USDC}`
+    );
+  }
+  
+  return true;
 }
