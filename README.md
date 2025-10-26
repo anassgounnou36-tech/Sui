@@ -109,11 +109,30 @@ The bot uses these mainnet addresses by default (can be overridden via env vars)
 - **Suilend**: `0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85`
 - **Navi**: `0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42`
 
-**Pool Discovery**: Pool IDs for SUI/USDC pairs are resolved dynamically at startup using the SDKs. The resolver:
-- Discovers pools based on coin types and 0.05% fee tier
-- Validates coin ordering in pools (SUI vs USDC as coin A or B)
+**Pool Discovery**: Pool IDs for SUI/USDC pairs are resolved dynamically at startup. The resolver:
+- Discovers pools based on coin types (native USDC + SUI) and 0.05% fee tier
+- Validates coin ordering in pools (determines if SUI is coin A or B)
 - Extracts current sqrtPrice and liquidity for accurate quotes
 - Verifies all pool IDs exist on-chain before trading
+- Supports optional env overrides: `CETUS_SUI_USDC_POOL_ID` and `TURBOS_SUI_USDC_POOL_ID`
+- When overrides are provided, verifies they match SUI + native USDC and 0.05% fee
+
+Use `npm run find-pools` to discover available SUI/native-USDC pools on both DEXes.
+
+**Flashloan Entrypoints**: The bot uses the verified Move entrypoints:
+- **Suilend** (primary, 0.05% fee):
+  - Borrow: `lending::flash_borrow(lending_market, reserve_index, amount)` → `(Coin<T>, FlashLoanReceipt)`
+  - Repay: `lending::flash_repay(lending_market, reserve_index, Coin<T>, FlashLoanReceipt)`
+  - Reserve index 0 is typically native USDC (dynamically confirmed at runtime)
+- **Navi** (fallback, 0.06% fee):
+  - Borrow: `lending::flash_loan(storage, pool_id, amount, &Clock)` → `(Coin<T>, FlashLoanReceipt)`
+  - Repay: `lending::repay_flash_loan(storage, pool_id, Coin<T>, FlashLoanReceipt)`
+  - Pool ID 3 is typically native USDC (dynamically confirmed at runtime)
+
+**Swap Entrypoints**: The bot uses the verified Move entrypoints:
+- **Cetus**: `pool::swap(config, &mut Pool, Coin<A>, Coin<B>, a2b, by_amount_in, amount, amount_limit, sqrt_price_limit, &Clock)`
+- **Turbos**: `pool::swap_a_b` and `pool::swap_b_a` with parameters `(pool, coin_in, amount, amount_threshold, sqrt_price_limit, &Clock)`
+- Both enforce 1% max slippage via `amount_limit`/`amount_threshold` and `sqrt_price_limit` from SDK quotes
 
 This ensures the bot always uses the correct pools with proper coin ordering, preventing price calculation errors.
 
@@ -124,6 +143,14 @@ npm run build
 ```
 
 ## Usage
+
+### 0. Discover Pools (Recommended First Step)
+
+```bash
+npm run find-pools
+```
+
+Discovers and displays SUI/native-USDC pools on both Cetus and Turbos DEXes at the 0.05% fee tier. Shows pool IDs, coin types, fee rates, and liquidity. Outputs recommended pool IDs for your `.env` file.
 
 ### 1. Check Current Spreads (No Trading)
 

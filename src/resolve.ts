@@ -56,6 +56,7 @@ export function getResolvedAddresses(): ResolvedAddresses {
 /**
  * Resolve Cetus pool for SUI/USDC 0.05% fee tier
  * Uses SDK to discover the pool based on coin types and fee
+ * Supports optional env override CETUS_SUI_USDC_POOL_ID with validation
  */
 async function resolveCetusPool(client: SuiClient): Promise<{
   globalConfigId: string;
@@ -68,11 +69,16 @@ async function resolveCetusPool(client: SuiClient): Promise<{
     process.env.CETUS_GLOBAL_CONFIG_ID ||
     '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f';
 
-  // Known SUI/USDC pool ID (0.05% fee tier)
+  // Pool ID: Use env override if provided, otherwise use default
   // In production with SDK, you would use CetusClmmSDK.Pool.getPools() to discover
   const poolId =
     process.env.CETUS_SUI_USDC_POOL_ID ||
     '0xcf994611fd4c48e277ce3ffd4d4364c914af2c3cbb05f7bf6facd371de688630';
+
+  const isOverride = !!process.env.CETUS_SUI_USDC_POOL_ID;
+  if (isOverride) {
+    logger.info(`Using env override for Cetus pool: ${poolId}`);
+  }
 
   // Verify pool exists and fetch metadata
   try {
@@ -98,21 +104,31 @@ async function resolveCetusPool(client: SuiClient): Promise<{
       throw new Error('Pool type not found');
     }
 
-    // Parse type arguments: Pool<CoinA, CoinB>
-    const typeMatch = poolType.match(/<([^,]+),\s*([^>]+)>/);
+    // Parse type arguments: Pool<CoinA, CoinB, FeeType> (ignoring fee type)
+    const typeMatch = poolType.match(/<([^,]+),\s*([^,]+)/);
     if (!typeMatch) {
       throw new Error(`Cannot parse pool type: ${poolType}`);
     }
 
     const [, coinTypeA, coinTypeB] = typeMatch;
 
-    // Determine which coin is SUI and which is USDC
-    const suiIsCoinA = coinTypeA === COIN_TYPES.SUI;
-    const usdcIsCoinA = coinTypeA === COIN_TYPES.USDC;
+    // Verify this is SUI/USDC pool
+    const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+    const hasUsdc = coinTypeA === COIN_TYPES.USDC || coinTypeB === COIN_TYPES.USDC;
 
-    if (!suiIsCoinA && !usdcIsCoinA) {
-      throw new Error(
-        `Pool does not contain expected coin types. Found: ${coinTypeA}, ${coinTypeB}`
+    if (!hasSui || !hasUsdc) {
+      const error = `Pool does not contain SUI + native USDC. Found: ${coinTypeA}, ${coinTypeB}`;
+      if (isOverride) {
+        throw new Error(`Env override pool invalid: ${error}`);
+      }
+      throw new Error(error);
+    }
+
+    // Verify fee is 0.05% (500 bps)
+    const feeRate = Number(fields.fee_rate || fields.fee || 500);
+    if (isOverride && feeRate !== 500) {
+      logger.warn(
+        `⚠️  Env override pool has fee ${(feeRate / 100).toFixed(2)}%, expected 0.05%`
       );
     }
 
@@ -124,7 +140,7 @@ async function resolveCetusPool(client: SuiClient): Promise<{
       poolId,
       coinTypeA,
       coinTypeB,
-      feeTier: 500, // 0.05% = 500 bps
+      feeTier: feeRate,
       currentSqrtPrice: currentSqrtPrice?.toString(),
       liquidity: liquidity?.toString(),
     };
@@ -132,7 +148,7 @@ async function resolveCetusPool(client: SuiClient): Promise<{
     logger.success(`✓ Cetus pool resolved: ${poolId}`);
     logger.info(`  Coin A: ${coinTypeA.split('::').pop()}`);
     logger.info(`  Coin B: ${coinTypeB.split('::').pop()}`);
-    logger.info(`  Fee: 0.05%`);
+    logger.info(`  Fee: ${(feeRate / 100).toFixed(2)}%`);
     logger.info(`  SqrtPrice: ${currentSqrtPrice}`);
 
     return { globalConfigId, suiUsdcPool: poolMetadata };
@@ -144,6 +160,7 @@ async function resolveCetusPool(client: SuiClient): Promise<{
 
 /**
  * Resolve Turbos pool for SUI/USDC 0.05% fee tier
+ * Supports optional env override TURBOS_SUI_USDC_POOL_ID with validation
  */
 async function resolveTurbosPool(client: SuiClient): Promise<{
   factoryId: string;
@@ -156,10 +173,15 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
     process.env.TURBOS_FACTORY_ID ||
     '0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1';
 
-  // Known SUI/USDC pool ID (0.05% fee tier)
+  // Pool ID: Use env override if provided, otherwise use default
   const poolId =
     process.env.TURBOS_SUI_USDC_POOL_ID ||
     '0x5eb2dfcdd1b15d2021328258f6d5ec081e9a0cdcfa9e13a0eaeb9b5f7505ca78';
+
+  const isOverride = !!process.env.TURBOS_SUI_USDC_POOL_ID;
+  if (isOverride) {
+    logger.info(`Using env override for Turbos pool: ${poolId}`);
+  }
 
   // Verify pool exists and fetch metadata
   try {
@@ -179,26 +201,36 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
 
     const fields = content.fields;
 
-    // Extract type arguments from pool type
+    // Extract type arguments from pool type (ignoring fee type)
     const poolType = poolObj.data.type;
     if (!poolType) {
       throw new Error('Pool type not found');
     }
 
-    const typeMatch = poolType.match(/<([^,]+),\s*([^>]+)>/);
+    const typeMatch = poolType.match(/<([^,]+),\s*([^,]+)/);
     if (!typeMatch) {
       throw new Error(`Cannot parse pool type: ${poolType}`);
     }
 
     const [, coinTypeA, coinTypeB] = typeMatch;
 
-    // Verify this is the SUI/USDC pool
-    const suiIsCoinA = coinTypeA === COIN_TYPES.SUI;
-    const usdcIsCoinA = coinTypeA === COIN_TYPES.USDC;
+    // Verify this is SUI/USDC pool
+    const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+    const hasUsdc = coinTypeA === COIN_TYPES.USDC || coinTypeB === COIN_TYPES.USDC;
 
-    if (!suiIsCoinA && !usdcIsCoinA) {
-      throw new Error(
-        `Pool does not contain expected coin types. Found: ${coinTypeA}, ${coinTypeB}`
+    if (!hasSui || !hasUsdc) {
+      const error = `Pool does not contain SUI + native USDC. Found: ${coinTypeA}, ${coinTypeB}`;
+      if (isOverride) {
+        throw new Error(`Env override pool invalid: ${error}`);
+      }
+      throw new Error(error);
+    }
+
+    // Verify fee is 0.05% (500 bps)
+    const feeRate = Number(fields.fee || fields.fee_rate || 500);
+    if (isOverride && feeRate !== 500) {
+      logger.warn(
+        `⚠️  Env override pool has fee ${(feeRate / 100).toFixed(2)}%, expected 0.05%`
       );
     }
 
@@ -210,7 +242,7 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
       poolId,
       coinTypeA,
       coinTypeB,
-      feeTier: 500, // 0.05%
+      feeTier: feeRate,
       currentSqrtPrice: currentSqrtPrice?.toString(),
       liquidity: liquidity?.toString(),
     };
@@ -218,7 +250,7 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
     logger.success(`✓ Turbos pool resolved: ${poolId}`);
     logger.info(`  Coin A: ${coinTypeA.split('::').pop()}`);
     logger.info(`  Coin B: ${coinTypeB.split('::').pop()}`);
-    logger.info(`  Fee: 0.05%`);
+    logger.info(`  Fee: ${(feeRate / 100).toFixed(2)}%`);
     logger.info(`  SqrtPrice: ${currentSqrtPrice}`);
 
     return { factoryId, suiUsdcPool: poolMetadata };
