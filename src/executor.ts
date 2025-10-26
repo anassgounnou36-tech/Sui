@@ -4,15 +4,11 @@ import { COIN_TYPES } from './addresses';
 import { buildTransaction, signAndExecuteTransaction } from './utils/sui';
 import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi } from './flashloan';
 import {
-  quoteCetusSwapB2A,
-  quoteCetusSwapA2B,
-  buildCetusSwap,
   quoteCetusPoolSwapB2A,
   quoteCetusPoolSwapA2B,
   buildCetusPoolSwap,
 } from './cetusIntegration';
-import { quoteTurbosSwapB2A, quoteTurbosSwapA2B, buildTurbosSwap } from './turbosIntegration';
-import { getResolvedAddresses, getCetusPools } from './resolve';
+import { getCetusPools } from './resolve';
 import { calculateMinOut } from './slippage';
 import Decimal from 'decimal.js';
 
@@ -32,6 +28,7 @@ export interface ArbResult {
 /**
  * Validate that arbitrage opportunity is safe and profitable
  * Checks combined fees, slippage, and quote validity
+ * Only validates Cetus fee-tier arbitrage directions
  */
 async function validateArbOpportunity(
   direction: ArbDirection,
@@ -40,22 +37,14 @@ async function validateArbOpportunity(
   flashloanFeePercent: number
 ): Promise<{ valid: boolean; error?: string; quotes?: any }> {
   try {
-    // Get quotes from both DEXes at the actual flashloan size
+    // Get quotes from Cetus pools at the actual flashloan size
     logger.debug('Getting quotes for validation...');
 
     let firstSwapQuote: any;
     let secondSwapQuote: any;
 
-    if (direction === 'cetus-to-turbos') {
-      // USDC -> SUI on Cetus, then SUI -> USDC on Turbos
-      firstSwapQuote = await quoteCetusSwapB2A(flashloanAmount);
-      secondSwapQuote = await quoteTurbosSwapA2B(firstSwapQuote.amountOut);
-    } else if (direction === 'turbos-to-cetus') {
-      // USDC -> SUI on Turbos, then SUI -> USDC on Cetus
-      firstSwapQuote = await quoteTurbosSwapB2A(flashloanAmount);
-      secondSwapQuote = await quoteCetusSwapA2B(firstSwapQuote.amountOut);
-    } else if (direction === 'cetus-005-to-025') {
-      // USDC -> SUI on Cetus 0.05%, then SUI -> USDC on Cetus 0.25%
+    if (direction === 'cetus-005-to-025') {
+      // SUI -> USDC on Cetus 0.05%, then USDC -> SUI on Cetus 0.25%
       const pools = getCetusPools();
       firstSwapQuote = await quoteCetusPoolSwapB2A(pools.pool005, flashloanAmount, 0.05);
       secondSwapQuote = await quoteCetusPoolSwapA2B(
@@ -64,7 +53,7 @@ async function validateArbOpportunity(
         0.25
       );
     } else if (direction === 'cetus-025-to-005') {
-      // USDC -> SUI on Cetus 0.25%, then SUI -> USDC on Cetus 0.05%
+      // SUI -> USDC on Cetus 0.25%, then USDC -> SUI on Cetus 0.05%
       const pools = getCetusPools();
       firstSwapQuote = await quoteCetusPoolSwapB2A(pools.pool025, flashloanAmount, 0.25);
       secondSwapQuote = await quoteCetusPoolSwapA2B(
@@ -72,6 +61,12 @@ async function validateArbOpportunity(
         firstSwapQuote.amountOut,
         0.05
       );
+    } else if (direction === 'cetus-to-turbos' || direction === 'turbos-to-cetus') {
+      // Deprecated cross-DEX directions - should not be used
+      return {
+        valid: false,
+        error: `Cross-DEX arbitrage direction "${direction}" is deprecated. Use Cetus fee-tier arbitrage instead.`,
+      };
     } else {
       throw new Error(`Unknown arbitrage direction: ${direction}`);
     }
@@ -161,9 +156,6 @@ export async function executeFlashloanArb(
   logger.info(`Executing arbitrage: ${direction}, amount: ${amount}, minProfit: ${minProfit}`);
 
   try {
-    // Get resolved addresses
-    const resolved = getResolvedAddresses();
-
     // Determine which flashloan provider to use
     let flashloanFeePercent: number;
     let useSuilend = true;
@@ -197,25 +189,24 @@ export async function executeFlashloanArb(
     // Build the transaction
     const tx = buildTransaction();
 
-    // Step 1: Flashloan borrow USDC
-    logger.info('Step 1: Borrowing USDC via flashloan');
+    // Step 1: Flashloan borrow SUI
+    logger.info('Step 1: Borrowing SUI via flashloan');
     let borrowedCoins: any;
     let receipt: any;
 
     try {
       if (useSuilend) {
-        // For Suilend, reserve_index=0 is typically native USDC
-        // In production, this should be dynamically discovered from lending_market state
+        // For Suilend, reserve_index for SUI should be discovered dynamically
+        // Typically reserve index 0 is SUI on mainnet
         const reserveIndex = 0;
-        const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.USDC, reserveIndex);
+        const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.SUI, reserveIndex);
         borrowedCoins = suilendResult.borrowedCoins;
         receipt = suilendResult.receipt;
         logger.info(`Using Suilend flashloan (reserve ${reserveIndex})`);
       } else {
-        // For Navi, pool_id=3 is typically native USDC
-        // In production, this should be dynamically discovered from storage
-        const poolId = 3;
-        const naviResult = await borrowFromNavi(tx, amount, COIN_TYPES.USDC, poolId);
+        // For Navi, pool_id for SUI (should be discovered dynamically)
+        const poolId = 0;
+        const naviResult = await borrowFromNavi(tx, amount, COIN_TYPES.SUI, poolId);
         borrowedCoins = naviResult.borrowedCoins;
         receipt = naviResult.receipt;
         logger.info(`Using Navi flashloan (pool ${poolId})`);
@@ -227,82 +218,20 @@ export async function executeFlashloanArb(
 
     logger.info(`Flashloan repay amount: ${repayAmount} (fee: ${repayAmount - amount})`);
 
-    // Step 2 & 3: Execute swaps based on direction using integration modules
-    let finalUsdcCoins: any;
+    // Step 2 & 3: Execute swaps based on direction using Cetus fee-tier pools
+    let finalSuiCoins: any;
 
-    // Determine coin ordering and a2b direction for each pool
-    const cetusPool = resolved.cetus.suiUsdcPool;
-    const turbosPool = resolved.turbos.suiUsdcPool;
+    // Get Cetus pools
+    const pools = getCetusPools();
 
-    const cetusSuiIsA = cetusPool.coinTypeA === COIN_TYPES.SUI;
-    const turbosSuiIsA = turbosPool.coinTypeA === COIN_TYPES.SUI;
+    if (direction === 'cetus-005-to-025') {
+      // Sell SUI on 0.05% (SUI -> USDC), buy back on 0.25% (USDC -> SUI)
+      logger.info('Step 2: Swap SUI -> USDC on Cetus 0.05% pool (sell)');
 
-    if (direction === 'cetus-to-turbos') {
-      // Buy cheap on Cetus (USDC -> SUI), sell high on Turbos (SUI -> USDC)
-      logger.info('Step 2: Swap USDC -> SUI on Cetus (buy cheap)');
-
-      // Calculate min_out with slippage protection
-      const firstMinOut = calculateMinOut(firstSwap.amountOut, config.maxSlippagePercent);
-
-      const suiCoins = buildCetusSwap(
-        tx,
-        borrowedCoins,
-        amount,
-        firstMinOut,
-        firstSwap.sqrtPriceLimit,
-        !cetusSuiIsA // If SUI is A, we want B->A (false), if USDC is A, we want A->B (true)
-      );
-
-      logger.info('Step 3: Swap SUI -> USDC on Turbos (sell high)');
-
-      // Use the first swap output as input to second swap
-      const secondMinOut = repayAmount + minProfit; // Must at least cover repay + min profit
-
-      finalUsdcCoins = buildTurbosSwap(
-        tx,
-        suiCoins,
-        firstSwap.amountOut,
-        secondMinOut,
-        secondSwap.sqrtPriceLimit,
-        turbosSuiIsA // If SUI is A, we want A->B (true), if USDC is A, we want B->A (false)
-      );
-    } else if (direction === 'turbos-to-cetus') {
-      // Buy cheap on Turbos (USDC -> SUI), sell high on Cetus (SUI -> USDC)
-      logger.info('Step 2: Swap USDC -> SUI on Turbos (buy cheap)');
-
-      const firstMinOut = calculateMinOut(firstSwap.amountOut, config.maxSlippagePercent);
-
-      const suiCoins = buildTurbosSwap(
-        tx,
-        borrowedCoins,
-        amount,
-        firstMinOut,
-        firstSwap.sqrtPriceLimit,
-        !turbosSuiIsA // If SUI is A, we want B->A (false), if USDC is A, we want A->B (true)
-      );
-
-      logger.info('Step 3: Swap SUI -> USDC on Cetus (sell high)');
-
-      const secondMinOut = repayAmount + minProfit;
-
-      finalUsdcCoins = buildCetusSwap(
-        tx,
-        suiCoins,
-        firstSwap.amountOut,
-        secondMinOut,
-        secondSwap.sqrtPriceLimit,
-        cetusSuiIsA // If SUI is A, we want A->B (true), if USDC is A, we want B->A (false)
-      );
-    } else if (direction === 'cetus-005-to-025') {
-      // Buy on Cetus 0.05% (USDC -> SUI), sell on Cetus 0.25% (SUI -> USDC)
-      logger.info('Step 2: Swap USDC -> SUI on Cetus 0.05% pool (buy cheap)');
-
-      const pools = getCetusPools();
       const pool005SuiIsA = pools.pool005.coinTypeA === COIN_TYPES.SUI;
-
       const firstMinOut = calculateMinOut(firstSwap.amountOut, config.maxSlippagePercent);
 
-      const suiCoins = buildCetusPoolSwap(
+      const usdcCoins = buildCetusPoolSwap(
         tx,
         pools.pool005,
         pools.globalConfigId,
@@ -310,34 +239,32 @@ export async function executeFlashloanArb(
         amount,
         firstMinOut,
         firstSwap.sqrtPriceLimit,
-        !pool005SuiIsA // If SUI is A, want B->A, else A->B
+        pool005SuiIsA // If SUI is A, want A->B (SUI->USDC), else B->A
       );
 
-      logger.info('Step 3: Swap SUI -> USDC on Cetus 0.25% pool (sell high)');
+      logger.info('Step 3: Swap USDC -> SUI on Cetus 0.25% pool (buy back)');
 
       const pool025SuiIsA = pools.pool025.coinTypeA === COIN_TYPES.SUI;
-      const secondMinOut = repayAmount + minProfit;
+      const secondMinOut = repayAmount; // Must at least cover repay
 
-      finalUsdcCoins = buildCetusPoolSwap(
+      finalSuiCoins = buildCetusPoolSwap(
         tx,
         pools.pool025,
         pools.globalConfigId,
-        suiCoins,
+        usdcCoins,
         firstSwap.amountOut,
         secondMinOut,
         secondSwap.sqrtPriceLimit,
-        pool025SuiIsA // If SUI is A, want A->B, else B->A
+        !pool025SuiIsA // If SUI is A, want B->A (USDC->SUI), else A->B
       );
     } else if (direction === 'cetus-025-to-005') {
-      // Buy on Cetus 0.25% (USDC -> SUI), sell on Cetus 0.05% (SUI -> USDC)
-      logger.info('Step 2: Swap USDC -> SUI on Cetus 0.25% pool (buy cheap)');
+      // Sell SUI on 0.25% (SUI -> USDC), buy back on 0.05% (USDC -> SUI)
+      logger.info('Step 2: Swap SUI -> USDC on Cetus 0.25% pool (sell)');
 
-      const pools = getCetusPools();
       const pool025SuiIsA = pools.pool025.coinTypeA === COIN_TYPES.SUI;
-
       const firstMinOut = calculateMinOut(firstSwap.amountOut, config.maxSlippagePercent);
 
-      const suiCoins = buildCetusPoolSwap(
+      const usdcCoins = buildCetusPoolSwap(
         tx,
         pools.pool025,
         pools.globalConfigId,
@@ -345,43 +272,50 @@ export async function executeFlashloanArb(
         amount,
         firstMinOut,
         firstSwap.sqrtPriceLimit,
-        !pool025SuiIsA // If SUI is A, want B->A, else A->B
+        pool025SuiIsA // If SUI is A, want A->B (SUI->USDC), else B->A
       );
 
-      logger.info('Step 3: Swap SUI -> USDC on Cetus 0.05% pool (sell high)');
+      logger.info('Step 3: Swap USDC -> SUI on Cetus 0.05% pool (buy back)');
 
       const pool005SuiIsA = pools.pool005.coinTypeA === COIN_TYPES.SUI;
-      const secondMinOut = repayAmount + minProfit;
+      const secondMinOut = repayAmount; // Must at least cover repay
 
-      finalUsdcCoins = buildCetusPoolSwap(
+      finalSuiCoins = buildCetusPoolSwap(
         tx,
         pools.pool005,
         pools.globalConfigId,
-        suiCoins,
+        usdcCoins,
         firstSwap.amountOut,
         secondMinOut,
         secondSwap.sqrtPriceLimit,
-        pool005SuiIsA // If SUI is A, want A->B, else B->A
+        !pool005SuiIsA // If SUI is A, want B->A (USDC->SUI), else A->B
       );
-    } else {
-      throw new Error(`Unknown arbitrage direction: ${direction}`);
+    } else if (direction === 'cetus-to-turbos' || direction === 'turbos-to-cetus') {
+      // Deprecated cross-DEX directions
+      logger.error(`Cross-DEX arbitrage direction "${direction}" is deprecated.`);
+      return {
+        success: false,
+        error: `Cross-DEX arbitrage is no longer supported. Use Cetus fee-tier arbitrage instead.`,
+      };
     }
 
     // Step 4: Split coins for repayment
     logger.info('Step 4: Splitting coins for repayment and profit');
 
-    // Split repay amount from final USDC
-    const [repayCoins, profitCoins] = tx.splitCoins(finalUsdcCoins, [tx.pure.u64(repayAmount.toString())]);
+    // Split repay amount from final SUI
+    const [repayCoins, profitCoins] = tx.splitCoins(finalSuiCoins, [tx.pure.u64(repayAmount.toString())]);
 
     // Step 5: Repay flashloan
     logger.info('Step 5: Repaying flashloan');
 
     if (useSuilend) {
+      // For SUI flashloan, need to discover reserve index dynamically (typically 0 for SUI)
       const reserveIndex = 0; // Must match borrow
-      repayToSuilend(tx, receipt, repayCoins, COIN_TYPES.USDC, reserveIndex);
+      repayToSuilend(tx, receipt, repayCoins, COIN_TYPES.SUI, reserveIndex);
     } else {
-      const poolId = 3; // Must match borrow
-      repayToNavi(tx, receipt, repayCoins, COIN_TYPES.USDC, poolId);
+      // Navi fallback for SUI
+      const poolId = 0; // SUI pool - must match borrow
+      repayToNavi(tx, receipt, repayCoins, COIN_TYPES.SUI, poolId);
     }
 
     // Step 6: Transfer profit to wallet

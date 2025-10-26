@@ -55,6 +55,7 @@ export function getResolvedAddresses(): ResolvedAddresses {
  * Resolve Cetus pool for SUI/USDC 0.05% fee tier (DEPRECATED - use resolveCetusPoolByFeeTier)
  * Kept for backward compatibility, but not used in main flow
  */
+/*
 async function resolveCetusPool(client: SuiClient): Promise<{
   globalConfigId: string;
   suiUsdcPool: PoolMetadata;
@@ -76,6 +77,7 @@ async function resolveCetusPool(client: SuiClient): Promise<{
 
   return { globalConfigId, suiUsdcPool: poolMetadata };
 }
+*/
 
 /**
  * Resolve a specific Cetus pool by fee tier with strict RPC-based coin type verification
@@ -204,9 +206,10 @@ async function resolveCetusPoolByFeeTier(
 
 /**
  * Resolve Turbos pool for SUI/USDC 0.05% fee tier (DEPRECATED - no longer used)
- * Kept for backward compatibility only
+ * Commented out since Turbos is no longer supported
  */
-async function resolveTurbosPool(client: SuiClient): Promise<{
+/*
+async function resolveTurbosPool(_client: SuiClient): Promise<{
   factoryId: string;
   suiUsdcPool: PoolMetadata;
 }> {
@@ -228,6 +231,7 @@ async function resolveTurbosPool(client: SuiClient): Promise<{
 
   return { factoryId, suiUsdcPool: stubPoolMetadata };
 }
+*/
 
 /**
  * Resolve Suilend lending market

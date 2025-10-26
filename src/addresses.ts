@@ -115,20 +115,27 @@ if (process.env.TURBOS_FACTORY_ID || process.env.TURBOS_SUI_USDC_POOL_ID) {
   );
 }
 
-// Pool configurations with fee tiers
+// Pool configurations with fee tiers (DEPRECATED - for backward compatibility only)
 export const POOLS = {
   cetus: {
-    suiUsdc: {
-      poolId: CETUS.suiUsdcPoolId,
+    suiUsdc005: {
+      poolId: CETUS.suiUsdcPool005Id,
       feeTier: 500, // 0.05% = 500 basis points
       coinTypeA: COIN_TYPES.SUI,
       coinTypeB: COIN_TYPES.USDC,
     },
+    suiUsdc025: {
+      poolId: CETUS.suiUsdcPool025Id,
+      feeTier: 2500, // 0.25% = 2500 basis points
+      coinTypeA: COIN_TYPES.SUI,
+      coinTypeB: COIN_TYPES.USDC,
+    },
   },
+  // Turbos deprecated
   turbos: {
     suiUsdc: {
-      poolId: TURBOS.suiUsdcPoolId,
-      feeTier: 500, // 0.05% = 500 basis points
+      poolId: '', // Deprecated
+      feeTier: 500,
       coinTypeA: COIN_TYPES.SUI,
       coinTypeB: COIN_TYPES.USDC,
     },
