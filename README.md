@@ -125,7 +125,21 @@ npm run build
 
 ## Usage
 
-### 1. Check Current Spreads (No Trading)
+### 1. Discover Pool Addresses
+
+```bash
+npm run find-pools
+```
+
+Discovers and displays all DEX pool addresses and lending market IDs from on-chain data. Shows:
+- Cetus and Turbos SUI/USDC pool IDs
+- Pool metadata (coin types, fee tiers, liquidity)
+- Suilend and Navi lending market addresses
+- Environment variable overrides for custom configurations
+
+Useful for verifying pool configurations before trading.
+
+### 2. Check Current Spreads (No Trading)
 
 ```bash
 npm run spread
@@ -133,7 +147,7 @@ npm run spread
 
 Shows current executable prices from both DEXes at your configured flashloan size, with spread analysis and profitability estimation. No trades executed.
 
-### 2. Simulate Full Arbitrage (No Signing)
+### 3. Simulate Full Arbitrage (No Signing)
 
 ```bash
 npm run simulate
@@ -147,7 +161,7 @@ Builds the complete PTB with:
 
 Does not sign or submit - safe to run anytime.
 
-### 3. Dry Run Mode (Build But Don't Execute)
+### 4. Dry Run Mode (Build But Don't Execute)
 
 ```bash
 npm run dry-run
@@ -155,12 +169,13 @@ npm run dry-run
 
 Runs the full monitoring loop with real price checks, but constructs PTBs without signing or submitting. Useful for testing the monitoring logic.
 
-### 4. Live Trading
+### 5. Live Trading
 
 ⚠️ **Safety Checklist Before Going Live:**
 
 - [ ] Verify wallet address is correct
 - [ ] Start with tiny amount (10 USDC)
+- [ ] Run `npm run find-pools` to verify pool addresses
 - [ ] Run `npm run spread` to check current market
 - [ ] Run `npm run simulate` to verify PTB construction
 - [ ] Monitor first few trades manually
@@ -172,7 +187,7 @@ Runs the full monitoring loop with real price checks, but constructs PTBs withou
 npm start
 ```
 
-### 5. Docker Deployment
+### 6. Docker Deployment
 
 Build and run in Docker:
 
@@ -468,6 +483,55 @@ Contributions welcome! Please:
 2. Create a feature branch
 3. Test thoroughly with dry-run and small amounts
 4. Submit a pull request with clear description
+
+## Troubleshooting
+
+### Build and Installation Issues
+
+**Problem**: TypeScript build errors with "Cannot find module" or import errors
+- **Solution**: Ensure you're using Node.js 20.x or higher. Run `node --version` to check.
+- **Solution**: Delete `node_modules` and `package-lock.json`, then run `npm install` again.
+- **Solution**: Verify that the project has `"type": "module"` in package.json for ESM support.
+
+**Problem**: Running scripts fails with "ERR_MODULE_NOT_FOUND"
+- **Solution**: Run `npm run build` first to compile TypeScript to JavaScript.
+- **Solution**: Check that import statements in TypeScript files include `.js` extensions for relative imports.
+
+**Problem**: Decimal.js constructor errors during build
+- **Solution**: Ensure you're importing Decimal correctly: `import { Decimal } from 'decimal.js';` (not default import).
+
+### Runtime Issues
+
+**Problem**: "fetch failed" or network connection errors
+- **Solution**: Check your internet connection and ensure RPC endpoints are accessible.
+- **Solution**: Try alternative RPC endpoints in your `.env` file.
+- **Solution**: Some networks may block certain domains. Verify firewall settings.
+
+**Problem**: "TypeError: Cannot read property" or similar runtime errors
+- **Solution**: Ensure all required environment variables are set in `.env` file.
+- **Solution**: Run `mkdir logs` to create the logs directory if it doesn't exist.
+- **Solution**: For dry-run testing, set `DRY_RUN=true` and `VERIFY_ON_CHAIN=false` in `.env`.
+
+**Problem**: Scripts timeout or hang
+- **Solution**: This may be due to network latency. Increase timeout values in the CI workflow if running in CI.
+- **Solution**: Verify RPC endpoints are responsive: `curl -X POST <RPC_URL> -H "Content-Type: application/json"`
+
+### Directory Confusion
+
+**Problem**: "Are you in the wrong directory?" warning
+- **Cause**: This can happen if you cloned or are working in a different project directory (e.g., zkSync-Era-main).
+- **Solution**: Ensure you're in the correct project directory: `cd sui-flashloan-arbitrage-bot`
+- **Solution**: Check that `package.json` contains `"name": "sui-flashloan-arbitrage-bot"`
+
+### CI/CD Issues
+
+**Problem**: CI build fails with dependency installation errors
+- **Solution**: The CI workflow now supports both `npm ci` (with lockfile) and `npm install` (without lockfile).
+- **Solution**: Commit `package-lock.json` to the repository for deterministic builds.
+
+**Problem**: CI scripts fail with network errors
+- **Solution**: Network access may be restricted in CI environments. Scripts are designed to fail gracefully.
+- **Solution**: Use mocked or local tests for CI validation instead of live network calls.
 
 ## Support
 
