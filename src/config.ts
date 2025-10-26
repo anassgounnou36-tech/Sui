@@ -30,17 +30,11 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
   return value.toLowerCase() === 'true';
 }
 
-// Strategy mode type
-export type StrategyMode = 'CETUS_TURBOS' | 'CETUS_FEE_TIER_ARB';
-
 // Flashloan asset type
 export type FlashloanAsset = 'SUI' | 'USDC';
 
 // Configuration constants
 export const config = {
-  // Strategy mode
-  mode: getEnvString('MODE', 'CETUS_TURBOS') as StrategyMode,
-
   // Multi-RPC Configuration with failover
   rpcEndpoints: {
     primary: getEnvString(
@@ -61,8 +55,8 @@ export const config = {
   walletAddress: getEnvString('WALLET_ADDRESS', ''),
 
   // Flashloan Configuration
-  flashloanAsset: getEnvString('FLASHLOAN_ASSET', 'USDC') as FlashloanAsset,
-  flashloanAmount: getEnvNumber('FLASHLOAN_AMOUNT', 10_000_000), // 10 USDC (6 decimals) or 10 SUI (9 decimals)
+  flashloanAsset: getEnvString('FLASHLOAN_ASSET', 'SUI') as FlashloanAsset,
+  flashloanAmount: getEnvNumber('FLASHLOAN_AMOUNT', 10_000_000_000), // 10 SUI (9 decimals)
   maxFlashloanUsdc: getEnvNumber('MAX_FLASHLOAN_USDC', 5_000_000), // 5M USDC max
 
   // Safety confirmation for large amounts
@@ -113,10 +107,11 @@ export const config = {
 
 // Validate critical configuration
 export function validateConfig(): void {
-  // Validate mode
-  if (config.mode !== 'CETUS_TURBOS' && config.mode !== 'CETUS_FEE_TIER_ARB') {
-    throw new Error(
-      `Invalid MODE: ${config.mode}. Must be CETUS_TURBOS or CETUS_FEE_TIER_ARB`
+  // Warn if MODE env is set (deprecated)
+  if (process.env.MODE) {
+    console.warn(
+      '⚠️  WARNING: MODE environment variable is deprecated and ignored. ' +
+      'The bot now defaults to Cetus fee-tier arbitrage with SUI flashloans.'
     );
   }
 
@@ -127,9 +122,12 @@ export function validateConfig(): void {
     );
   }
 
-  // Default to SUI for CETUS_FEE_TIER_ARB mode
-  if (config.mode === 'CETUS_FEE_TIER_ARB' && config.flashloanAsset === 'USDC') {
-    console.warn('Warning: CETUS_FEE_TIER_ARB mode defaults to SUI flashloan. Consider setting FLASHLOAN_ASSET=SUI');
+  // Warn if using USDC instead of SUI
+  if (config.flashloanAsset === 'USDC') {
+    console.warn(
+      '⚠️  WARNING: FLASHLOAN_ASSET=USDC is not typical for Cetus fee-tier arbitrage. ' +
+      'Consider using FLASHLOAN_ASSET=SUI.'
+    );
   }
 
   if (!config.dryRun) {

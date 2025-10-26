@@ -70,8 +70,8 @@ export async function verifyOnChainAddresses(): Promise<VerificationResult> {
     // Verify resolved pool IDs (critical)
     const poolChecks = [
       verifyObjectId('Cetus Global Config', resolved.cetus.globalConfigId, true),
-      verifyObjectId('Cetus SUI/USDC Pool', resolved.cetus.suiUsdcPool.poolId, true),
-      verifyObjectId('Turbos SUI/USDC Pool', resolved.turbos.suiUsdcPool.poolId, true),
+      verifyObjectId('Cetus 0.05% Pool', resolved.cetus.suiUsdcPool005.poolId, true),
+      verifyObjectId('Cetus 0.25% Pool', resolved.cetus.suiUsdcPool025.poolId, true),
     ];
 
     // Verify resolved lending markets (non-critical, they're fallbacks)

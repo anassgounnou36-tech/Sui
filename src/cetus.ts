@@ -32,9 +32,10 @@ export async function getCetusPrice(): Promise<number> {
   try {
     const client = getSuiClient();
 
-    // Fetch pool object
+    // Fetch pool object - using first available pool
+    const poolId = CETUS.suiUsdcPool005Id || CETUS.suiUsdcPool025Id;
     const poolObject = await client.getObject({
-      id: CETUS.suiUsdcPoolId,
+      id: poolId,
       options: {
         showContent: true,
       },
@@ -161,8 +162,9 @@ export function clearCetusCache(): void {
 export async function getCetusPoolInfo(): Promise<any> {
   try {
     const client = getSuiClient();
+    const poolId = CETUS.suiUsdcPool005Id || CETUS.suiUsdcPool025Id;
     const poolObject = await client.getObject({
-      id: CETUS.suiUsdcPoolId,
+      id: poolId,
       options: {
         showContent: true,
         showType: true,
