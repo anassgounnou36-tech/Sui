@@ -1,10 +1,9 @@
-import { config, validateConfig, smallestUnitToUsdc, usdcToSmallestUnit } from './config';
+import { config, validateConfig, smallestUnitToUsdc, smallestUnitToSui, usdcToSmallestUnit } from './config';
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
 import { runStartupVerification } from './verify';
 import { resolvePoolAddresses, getCetusPools } from './resolve';
-import { getCetusPrice, getCetusPriceByPool } from './cetusIntegration';
-import { getTurbosPrice } from './turbosIntegration';
+import { getCetusPriceByPool } from './cetusIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';
 import { COIN_TYPES } from './addresses';
 
@@ -26,8 +25,9 @@ function calculateSpread(price1: number, price2: number): number {
 }
 
 /**
- * Determine arbitrage direction based on prices
+ * Determine arbitrage direction based on prices (DEPRECATED for cross-DEX)
  */
+/*
 function determineArbDirection(cetusPrice: number, turbosPrice: number): ArbDirection | null {
   const spread = calculateSpread(cetusPrice, turbosPrice);
 
@@ -43,6 +43,7 @@ function determineArbDirection(cetusPrice: number, turbosPrice: number): ArbDire
     return 'turbos-to-cetus';
   }
 }
+*/
 
 /**
  * Determine fee-tier arbitrage direction based on prices from two Cetus pools
@@ -217,128 +218,24 @@ async function feeTierMonitoringLoop() {
 }
 
 /**
- * Main monitoring loop iteration for CETUS_TURBOS mode
+ * Main monitoring loop iteration for CETUS_TURBOS mode (DEPRECATED - kept for reference)
  */
+/*
 async function monitoringLoop() {
-  try {
-    // Fetch prices from both DEXes
-    logger.debug('Fetching prices from Cetus and Turbos...');
-
-    const [cetusPrice, turbosPrice] = await Promise.all([getCetusPrice(), getTurbosPrice()]);
-
-    logger.info(
-      `Cetus: ${cetusPrice.toFixed(6)} USDC/SUI | Turbos: ${turbosPrice.toFixed(6)} USDC/SUI`
-    );
-
-    // Calculate spread
-    const spread = calculateSpread(cetusPrice, turbosPrice);
-    logger.info(`Spread: ${spread.toFixed(4)}% (min: ${config.minSpreadPercent}%)`);
-
-    // Determine arbitrage direction
-    const direction = determineArbDirection(cetusPrice, turbosPrice);
-
-    if (!direction) {
-      logger.debug('No profitable arbitrage opportunity');
-      consecutiveSpreadCount = 0;
-      lastSpreadDirection = null;
-      return;
-    }
-
-    logger.info(`Potential arbitrage direction: ${direction}`);
-
-    // Check for consecutive spread confirmation
-    if (lastSpreadDirection === direction) {
-      consecutiveSpreadCount++;
-      logger.info(`Consecutive spread count: ${consecutiveSpreadCount}`);
-    } else {
-      consecutiveSpreadCount = 1;
-      lastSpreadDirection = direction;
-    }
-
-    // Require 2 consecutive ticks with same direction
-    if (consecutiveSpreadCount < 2) {
-      logger.info('Waiting for confirmation (need 2 consecutive ticks)');
-      return;
-    }
-
-    // Check rate limits
-    if (!canExecute()) {
-      logger.debug('Rate limited, skipping execution');
-      return;
-    }
-
-    // Execute arbitrage
-    logger.info(`=== EXECUTING ARBITRAGE: ${direction} ===`);
-    const flashloanAmount = BigInt(config.flashloanAmount);
-    const minProfit = usdcToSmallestUnit(config.minProfitUsdc);
-
-    pendingTransactions++;
-    lastExecutionTime = Date.now();
-    totalExecutions++;
-
-    const result = await executeFlashloanArb(direction, flashloanAmount, minProfit);
-
-    pendingTransactions--;
-
-    if (result.success) {
-      successfulExecutions++;
-      consecutiveFailures = 0; // Reset on success
-      const profitUsdc = result.profit ? smallestUnitToUsdc(result.profit) : 0;
-      totalProfitUsdc += profitUsdc;
-
-      logger.success(`✓ Arbitrage successful!`);
-      logger.success(`  Profit: ${profitUsdc.toFixed(6)} USDC`);
-      if (result.txDigest) {
-        logger.success(`  TX: ${result.txDigest}`);
-      }
-      logger.info(
-        `Total P&L: ${totalProfitUsdc.toFixed(6)} USDC (${successfulExecutions}/${totalExecutions} successful)`
-      );
-
-      // Log trade event as JSON
-      logger.tradeEvent({
-        timestamp: new Date().toISOString(),
-        direction,
-        size: flashloanAmount.toString(),
-        minOut: minProfit.toString(),
-        provider: 'suilend', // TODO: Track actual provider used
-        repayAmount: flashloanAmount.toString(),
-        realizedProfit: result.profit?.toString(),
-        txDigest: result.txDigest,
-        status: 'success',
-      });
-
-      // Reset consecutive count after successful execution
-      consecutiveSpreadCount = 0;
-      lastSpreadDirection = null;
-    } else {
-      consecutiveFailures++;
-      logger.error(`✗ Arbitrage failed: ${result.error}`);
-
-      // Log failed trade event
-      logger.tradeEvent({
-        timestamp: new Date().toISOString(),
-        direction,
-        size: flashloanAmount.toString(),
-        minOut: minProfit.toString(),
-        provider: 'suilend',
-        repayAmount: flashloanAmount.toString(),
-        status: 'failed',
-        error: result.error,
-      });
-
-      // Kill switch: Stop if too many consecutive failures
-      if (consecutiveFailures >= config.maxConsecutiveFailures) {
-        logger.error(
-          `KILL SWITCH ACTIVATED: ${consecutiveFailures} consecutive failures. Shutting down.`
-        );
-        process.exit(1);
-      }
-    }
-  } catch (error) {
-    logger.error('Error in monitoring loop', error);
-  }
+  // This function has been deprecated. The bot now uses feeTierMonitoringLoop() exclusively.
+  logger.warn('monitoringLoop() is deprecated. Use feeTierMonitoringLoop() instead.');
 }
+*/
+
+/**
+ * Determine arbitrage direction based on prices (DEPRECATED - kept for reference)
+ */
+/*
+function determineArbDirection(cetusPrice: number, turbosPrice: number): ArbDirection | null {
+  // This function has been deprecated for cross-DEX arbitrage.
+  return null;
+}
+*/
 
 /**
  * Main entry point
@@ -366,7 +263,7 @@ async function main() {
 
     // Resolve pool addresses dynamically
     logger.info('Resolving pool addresses...');
-    await resolvePoolAddresses(client, config.mode);
+    await resolvePoolAddresses(client);
 
     // Initialize keypair (skip if dry run)
     if (!config.dryRun) {
@@ -400,30 +297,24 @@ async function main() {
 
     // Log configuration
     logger.info('Configuration:');
-    logger.info(`  Mode: ${config.mode}`);
-    logger.info(`  Flashloan amount: ${smallestUnitToUsdc(BigInt(config.flashloanAmount))} USDC`);
+    logger.info(`  Strategy: Cetus fee-tier arbitrage`);
+    logger.info(`  Flashloan asset: ${config.flashloanAsset}`);
+    logger.info(`  Flashloan amount: ${config.flashloanAsset === 'SUI' ? smallestUnitToSui(BigInt(config.flashloanAmount)) + ' SUI' : smallestUnitToUsdc(BigInt(config.flashloanAmount)) + ' USDC'}`);
     logger.info(`  Min profit: ${config.minProfitUsdc} USDC`);
     logger.info(`  Min spread: ${config.minSpreadPercent}%`);
     logger.info(`  Max slippage: ${config.maxSlippagePercent}%`);
     logger.info(`  Check interval: ${config.checkIntervalMs}ms`);
 
-    // Start monitoring loop based on mode
-    const loopFunc =
-      config.mode === 'CETUS_FEE_TIER_ARB' ? feeTierMonitoringLoop : monitoringLoop;
-    const modeDesc =
-      config.mode === 'CETUS_FEE_TIER_ARB'
-        ? 'Cetus Fee-Tier Arbitrage'
-        : 'Cetus-Turbos Arbitrage';
-
-    logger.info(`Starting monitoring loop (${modeDesc})...`);
+    // Start Cetus fee-tier monitoring loop
+    logger.info(`Starting monitoring loop (Cetus Fee-Tier Arbitrage)...`);
     logger.success('=== Bot is now running ===');
 
     // Initial check
-    await loopFunc();
+    await feeTierMonitoringLoop();
 
     // Set up interval
     setInterval(async () => {
-      await loopFunc();
+      await feeTierMonitoringLoop();
     }, config.checkIntervalMs);
 
     // Keep process alive

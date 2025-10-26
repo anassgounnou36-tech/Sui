@@ -1,8 +1,8 @@
 import { config } from '../src/config';
 import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
-import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
-import { getCetusPrice, getCetusPoolInfo, quoteCetusSwapB2A } from '../src/cetusIntegration';
-import { getTurbosPrice, getTurbosPoolInfo, quoteTurbosSwapB2A } from '../src/turbosIntegration';
+import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
+import { getCetusPriceByPool } from '../src/cetusIntegration';
+import { COIN_TYPES } from '../src/addresses';
 
 /**
  * Calculate spread percentage between two prices
@@ -12,10 +12,13 @@ function calculateSpread(price1: number, price2: number): number {
 }
 
 /**
- * Print current price spreads with real SDK quotes
+ * Print current price spreads for Cetus fee-tier pools
  */
 async function printSpread() {
-  console.log('=== Sui DEX Price Spread Checker ===\n');
+  console.log('=== Sui Cetus Fee-Tier Spread Checker ===\n');
+  console.log('Strategy: Cetus fee-tier arbitrage (0.05% vs 0.25%)');
+  console.log('Flashloan asset: SUI');
+  console.log(`Expected USDC type: ${COIN_TYPES.BRIDGED_USDC}\n`);
 
   try {
     // Initialize RPC client
@@ -31,57 +34,34 @@ async function printSpread() {
     // Resolve pool addresses
     console.log('Resolving pool addresses...');
     await resolvePoolAddresses(client);
+    const pools = getCetusPools();
     console.log();
 
-    console.log('Fetching prices from Cetus and Turbos...\n');
+    console.log('Fetching prices from Cetus 0.05% and 0.25% pools...\n');
 
-    // Fetch prices using real SDKs
-    const [cetusPrice, turbosPrice] = await Promise.all([getCetusPrice(), getTurbosPrice()]);
+    // Fetch prices using real SDK from both pools
+    const [price005, price025] = await Promise.all([
+      getCetusPriceByPool(pools.pool005),
+      getCetusPriceByPool(pools.pool025),
+    ]);
 
     // Display prices
     console.log('Current Prices (SUI/USDC):');
-    console.log(`  Cetus:  ${cetusPrice.toFixed(6)} USDC per SUI`);
-    console.log(`  Turbos: ${turbosPrice.toFixed(6)} USDC per SUI`);
+    console.log(`  Cetus 0.05%: ${price005.toFixed(6)} USDC per SUI`);
+    console.log(`  Cetus 0.25%: ${price025.toFixed(6)} USDC per SUI`);
     console.log();
 
     // Calculate spread
-    const spread = calculateSpread(cetusPrice, turbosPrice);
-    const spreadDirection = cetusPrice < turbosPrice ? 'Cetus → Turbos' : 'Turbos → Cetus';
+    const spread = calculateSpread(price005, price025);
+    const spreadDirection = price005 < price025 ? '0.05% → 0.25%' : '0.25% → 0.05%';
 
     console.log('Spread Analysis:');
-    console.log(`  Absolute Spread: ${Math.abs(cetusPrice - turbosPrice).toFixed(6)} USDC`);
+    console.log(`  Absolute Spread: ${Math.abs(price005 - price025).toFixed(6)} USDC`);
     console.log(`  Percentage Spread: ${spread.toFixed(4)}%`);
     console.log(`  Direction: ${spreadDirection} (buy cheaper, sell higher)`);
     console.log();
 
-    // Get executable quotes at configured flashloan size
-    const flashloanAmountBigInt = BigInt(config.flashloanAmount);
-    console.log(`Fetching executable quotes at ${config.flashloanAmount / 1e6} USDC...\n`);
-
-    const quoteResults = await Promise.allSettled([
-      quoteCetusSwapB2A(flashloanAmountBigInt),
-      quoteTurbosSwapB2A(flashloanAmountBigInt),
-    ]);
-
-    console.log('Executable Quotes (USDC -> SUI):');
-    
-    if (quoteResults[0].status === 'fulfilled') {
-      const cetusQuote = quoteResults[0].value;
-      console.log(`  Cetus:  ${cetusQuote.amountOut} SUI (limit: ${cetusQuote.sqrtPriceLimit})`);
-    } else {
-      console.log(`  Cetus:  ⚠️  Failed to fetch quote - ${quoteResults[0].reason?.message || quoteResults[0].reason}`);
-    }
-
-    if (quoteResults[1].status === 'fulfilled') {
-      const turbosQuote = quoteResults[1].value;
-      console.log(`  Turbos: ${turbosQuote.amountOut} SUI (limit: ${turbosQuote.sqrtPriceLimit})`);
-    } else {
-      console.log(`  Turbos: ⚠️  Failed to fetch quote - ${quoteResults[1].reason?.message || quoteResults[1].reason}`);
-    }
-    
-    console.log();
-
-    // Profitability analysis with real flashloan size
+    // Profitability analysis
     const minSpread = config.minSpreadPercent;
     const isProfitable = spread >= minSpread;
 
@@ -93,41 +73,29 @@ async function printSpread() {
 
     if (isProfitable) {
       console.log('Estimated Arbitrage (at configured flashloan size):');
-      const flashloanAmount = config.flashloanAmount / 1e6; // Convert to USDC
+      const flashloanAmount = config.flashloanAmount / 1e9; // Convert to SUI
       const estimatedGross = (flashloanAmount * spread) / 100;
       const flashloanFee = flashloanAmount * (config.suilendFeePercent / 100);
-      const swapFees = flashloanAmount * 0.001; // ~0.1% total swap fees
+      const swapFees = flashloanAmount * 0.003; // ~0.3% total swap fees (0.05% + 0.25%)
       const estimatedNet = estimatedGross - flashloanFee - swapFees;
 
-      console.log(`  Flashloan Size: ${flashloanAmount.toFixed(2)} USDC`);
-      console.log(`  Gross Profit: ${estimatedGross.toFixed(6)} USDC`);
-      console.log(`  Flashloan Fee (${config.suilendFeePercent}%): ${flashloanFee.toFixed(6)} USDC`);
-      console.log(`  Swap Fees: ${swapFees.toFixed(6)} USDC`);
-      console.log(`  Net Profit: ${estimatedNet.toFixed(6)} USDC`);
+      console.log(`  Flashloan Size: ${flashloanAmount.toFixed(2)} SUI`);
+      console.log(`  Gross Profit: ${estimatedGross.toFixed(6)} SUI`);
+      console.log(`  Flashloan Fee (${config.suilendFeePercent}%): ${flashloanFee.toFixed(6)} SUI`);
+      console.log(`  Swap Fees: ${swapFees.toFixed(6)} SUI`);
+      console.log(`  Net Profit: ${estimatedNet.toFixed(6)} SUI`);
       console.log();
     }
 
     // Pool information
     console.log('Pool Information:');
-    try {
-      const resolved = getResolvedAddresses();
-      await getCetusPoolInfo(); // Verify pool is accessible
-      console.log(`  Cetus Pool ID: ${resolved.cetus.suiUsdcPool.poolId}`);
-      console.log(`  Cetus Coin A: ${resolved.cetus.suiUsdcPool.coinTypeA.split('::').pop()}`);
-      console.log(`  Cetus Coin B: ${resolved.cetus.suiUsdcPool.coinTypeB.split('::').pop()}`);
-    } catch (err) {
-      console.log(`  Cetus Pool: Error fetching info`);
-    }
-
-    try {
-      const resolved = getResolvedAddresses();
-      await getTurbosPoolInfo(); // Verify pool is accessible
-      console.log(`  Turbos Pool ID: ${resolved.turbos.suiUsdcPool.poolId}`);
-      console.log(`  Turbos Coin A: ${resolved.turbos.suiUsdcPool.coinTypeA.split('::').pop()}`);
-      console.log(`  Turbos Coin B: ${resolved.turbos.suiUsdcPool.coinTypeB.split('::').pop()}`);
-    } catch (err) {
-      console.log(`  Turbos Pool: Error fetching info`);
-    }
+    console.log(`  Pool 0.05% ID: ${pools.pool005.poolId}`);
+    console.log(`  Pool 0.05% Coin A: ${pools.pool005.coinTypeA.split('::').pop()}`);
+    console.log(`  Pool 0.05% Coin B: ${pools.pool005.coinTypeB.split('::').pop()}`);
+    console.log();
+    console.log(`  Pool 0.25% ID: ${pools.pool025.poolId}`);
+    console.log(`  Pool 0.25% Coin A: ${pools.pool025.coinTypeA.split('::').pop()}`);
+    console.log(`  Pool 0.25% Coin B: ${pools.pool025.coinTypeB.split('::').pop()}`);
 
     console.log();
     console.log('=== Spread Check Complete ===');

@@ -20,17 +20,26 @@ const BRIDGED_USDC = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846
 // Coin Types
 export const COIN_TYPES = {
   SUI: '0x2::sui::SUI',
-  // Native USDC coin type (6 decimals) - mainnet
-  USDC: getAddress('USDC_COIN_TYPE', NATIVE_USDC),
-  // Bridged USDC coin type for fee-tier arbitrage
+  // Bridged USDC is the default for Cetus fee-tier arbitrage
+  USDC: getAddress('BRIDGED_USDC_COIN_TYPE', BRIDGED_USDC),
+  // Keep BRIDGED_USDC as explicit reference
   BRIDGED_USDC: getAddress('BRIDGED_USDC_COIN_TYPE', BRIDGED_USDC),
-  // Reference constants
+  // Reference constants (deprecated for runtime use)
   NATIVE_USDC,
   WORMHOLE_USDC,
   // Hash constants for partial matching
   NATIVE_USDC_HASH,
   WORMHOLE_USDC_HASH,
 };
+
+// Warn if USDC_COIN_TYPE is set (backward compatibility check)
+if (process.env.USDC_COIN_TYPE && process.env.USDC_COIN_TYPE !== BRIDGED_USDC) {
+  console.warn(
+    '⚠️  WARNING: USDC_COIN_TYPE environment variable is deprecated for Cetus fee-tier arbitrage. ' +
+    'The strategy uses bridged USDC by default. ' +
+    `Set BRIDGED_USDC_COIN_TYPE instead if you need to override (current: ${process.env.USDC_COIN_TYPE})`
+  );
+}
 
 // Suilend Configuration
 export const SUILEND = {
@@ -72,27 +81,39 @@ export const CETUS = {
   // Global config and pool IDs - to be resolved dynamically at startup
   globalConfigId: getAddress(
     'CETUS_GLOBAL_CONFIG_ID',
-    '0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3'
+    '0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f'
   ),
-  suiUsdcPoolId: getAddress('CETUS_SUI_USDC_POOL_ID', ''),
-  suiUsdcPoolAddress: getAddress('CETUS_SUI_USDC_POOL_ADDRESS', ''),
-  // Fee-tier specific pools for CETUS_FEE_TIER_ARB mode
-  suiUsdcPool005Id: getAddress('CETUS_POOL_ID_005', ''), // 0.05% fee tier
-  suiUsdcPool025Id: getAddress('CETUS_POOL_ID_025', ''), // 0.25% fee tier
+  // Fee-tier specific pools for Cetus fee-tier arbitrage (default strategy)
+  suiUsdcPool005Id: getAddress(
+    'CETUS_POOL_ID_005',
+    '0x51e883ba7c0b566a26cbc8a94cd33eb0abd418a77cc1e60ad22fd9b1f29cd2ab'
+  ), // 0.05% fee tier
+  suiUsdcPool025Id: getAddress(
+    'CETUS_POOL_ID_025',
+    '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105'
+  ), // 0.25% fee tier
 };
 
-// Turbos DEX Configuration
+// Turbos DEX Configuration (DEPRECATED - kept for backward compatibility)
 export const TURBOS = {
   // Turbos CLMM package ID per spec
   packageId: getAddress(
     'TURBOS_PACKAGE_ID',
     '0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1'
   ),
-  // Factory and pool IDs - to be resolved dynamically at startup
+  // Factory and pool IDs - DEPRECATED, no longer used in runtime
   factoryId: getAddress('TURBOS_FACTORY_ID', ''),
   suiUsdcPoolId: getAddress('TURBOS_SUI_USDC_POOL_ID', ''),
   suiUsdcPoolAddress: getAddress('TURBOS_SUI_USDC_POOL_ADDRESS', ''),
 };
+
+// Warn if Turbos env vars are set
+if (process.env.TURBOS_FACTORY_ID || process.env.TURBOS_SUI_USDC_POOL_ID) {
+  console.warn(
+    '⚠️  WARNING: Turbos environment variables are deprecated. ' +
+    'The bot now uses Cetus fee-tier arbitrage only. Turbos configuration will be ignored.'
+  );
+}
 
 // Pool configurations with fee tiers
 export const POOLS = {
