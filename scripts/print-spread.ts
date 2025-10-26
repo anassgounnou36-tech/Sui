@@ -58,20 +58,28 @@ async function printSpread() {
     const flashloanAmountBigInt = BigInt(config.flashloanAmount);
     console.log(`Fetching executable quotes at ${config.flashloanAmount / 1e6} USDC...\n`);
 
-    try {
-      const [cetusQuote, turbosQuote] = await Promise.all([
-        quoteCetusSwapB2A(flashloanAmountBigInt),
-        quoteTurbosSwapB2A(flashloanAmountBigInt),
-      ]);
+    const quoteResults = await Promise.allSettled([
+      quoteCetusSwapB2A(flashloanAmountBigInt),
+      quoteTurbosSwapB2A(flashloanAmountBigInt),
+    ]);
 
-      console.log('Executable Quotes (USDC -> SUI):');
+    console.log('Executable Quotes (USDC -> SUI):');
+    
+    if (quoteResults[0].status === 'fulfilled') {
+      const cetusQuote = quoteResults[0].value;
       console.log(`  Cetus:  ${cetusQuote.amountOut} SUI (limit: ${cetusQuote.sqrtPriceLimit})`);
-      console.log(`  Turbos: ${turbosQuote.amountOut} SUI (limit: ${turbosQuote.sqrtPriceLimit})`);
-      console.log();
-    } catch (error) {
-      console.log('⚠️  Could not fetch executable quotes:', error);
-      console.log();
+    } else {
+      console.log(`  Cetus:  ⚠️  Failed to fetch quote - ${quoteResults[0].reason?.message || quoteResults[0].reason}`);
     }
+
+    if (quoteResults[1].status === 'fulfilled') {
+      const turbosQuote = quoteResults[1].value;
+      console.log(`  Turbos: ${turbosQuote.amountOut} SUI (limit: ${turbosQuote.sqrtPriceLimit})`);
+    } else {
+      console.log(`  Turbos: ⚠️  Failed to fetch quote - ${quoteResults[1].reason?.message || quoteResults[1].reason}`);
+    }
+    
+    console.log();
 
     // Profitability analysis with real flashloan size
     const minSpread = config.minSpreadPercent;
