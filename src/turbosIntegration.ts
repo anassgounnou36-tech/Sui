@@ -294,23 +294,32 @@ export function buildTurbosSwap(
   a2b: boolean
 ): any {
   const resolved = getResolvedAddresses();
+  const poolMeta = resolved.turbos.suiUsdcPool;
 
   logger.debug(
     `Building Turbos swap: amount=${amountIn}, minOut=${minAmountOut}, a2b=${a2b}, limit=${sqrtPriceLimit}`
   );
 
+  // Turbos uses separate entrypoints: pool::swap_a_b and pool::swap_b_a
+  // Per Perplexity spec, use TURBOS_PACKAGE with Clock (0x6) and Versioned if needed
+  const target = a2b 
+    ? `${TURBOS.packageId}::pool::swap_a_b`
+    : `${TURBOS.packageId}::pool::swap_b_a`;
+
+  const coinTypeA = poolMeta.coinTypeA;
+  const coinTypeB = poolMeta.coinTypeB;
+
   const [outputCoin] = tx.moveCall({
-    target: `${TURBOS.packageId}::pool::swap`,
+    target,
     arguments: [
       tx.object(resolved.turbos.suiUsdcPool.poolId),
       inputCoin,
-      tx.pure.bool(a2b),
-      tx.pure.bool(true), // by_amount_in
       tx.pure.u64(amountIn.toString()),
+      tx.pure.u64(minAmountOut.toString()), // amount_threshold (min out)
       tx.pure.u128(sqrtPriceLimit),
-      tx.pure.u64(minAmountOut.toString()), // min_amount_out for slippage protection
+      tx.object('0x6'), // Clock object
     ],
-    typeArguments: a2b ? [COIN_TYPES.SUI, COIN_TYPES.USDC] : [COIN_TYPES.USDC, COIN_TYPES.SUI],
+    typeArguments: [coinTypeA, coinTypeB],
   });
 
   return outputCoin;

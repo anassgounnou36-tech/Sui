@@ -302,27 +302,44 @@ export function buildCetusSwap(
   a2b: boolean
 ): any {
   const resolved = getResolvedAddresses();
+  const poolMeta = resolved.cetus.suiUsdcPool;
 
   logger.debug(
     `Building Cetus swap: amount=${amountIn}, minOut=${minAmountOut}, a2b=${a2b}, limit=${sqrtPriceLimit}`
   );
 
-  const [outputCoin] = tx.moveCall({
+  // Cetus swap entrypoint per Perplexity spec:
+  // pool::swap(config, &mut Pool, Coin<A>, Coin<B>, a2b, by_amount_in, amount u64, amount_limit u64, sqrt_price_limit u128, &Clock)
+  // For exact-in swaps, we pass the input coin as Coin<A> or Coin<B> and an empty coin for the other
+  // Type args [A,B] in pool coin order
+  
+  const coinTypeA = poolMeta.coinTypeA;
+  const coinTypeB = poolMeta.coinTypeB;
+  
+  // Create coins for both sides - input coin and empty coin for opposite side
+  const [coinA, coinB] = a2b 
+    ? [inputCoin, tx.splitCoins(tx.gas, [tx.pure.u64('0')])] 
+    : [tx.splitCoins(tx.gas, [tx.pure.u64('0')]), inputCoin];
+
+  const [outputCoinA, outputCoinB] = tx.moveCall({
     target: `${CETUS.packageId}::pool::swap`,
     arguments: [
       tx.object(resolved.cetus.globalConfigId),
       tx.object(resolved.cetus.suiUsdcPool.poolId),
-      inputCoin,
+      coinA,
+      coinB,
       tx.pure.bool(a2b),
       tx.pure.bool(true), // by_amount_in
       tx.pure.u64(amountIn.toString()),
+      tx.pure.u64(minAmountOut.toString()), // amount_limit (min out)
       tx.pure.u128(sqrtPriceLimit),
-      tx.pure.u64(minAmountOut.toString()), // min_amount_out for slippage protection
+      tx.object('0x6'), // Clock object
     ],
-    typeArguments: a2b ? [COIN_TYPES.SUI, COIN_TYPES.USDC] : [COIN_TYPES.USDC, COIN_TYPES.SUI],
+    typeArguments: [coinTypeA, coinTypeB],
   });
 
-  return outputCoin;
+  // Return the output coin (either coinA or coinB depending on direction)
+  return a2b ? outputCoinB : outputCoinA;
 }
 
 /**

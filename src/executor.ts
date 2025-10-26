@@ -168,15 +168,21 @@ export async function executeFlashloanArb(
 
     try {
       if (useSuilend) {
-        const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.USDC);
+        // For Suilend, reserve_index=0 is typically native USDC
+        // In production, this should be dynamically discovered from lending_market state
+        const reserveIndex = 0;
+        const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.USDC, reserveIndex);
         borrowedCoins = suilendResult.borrowedCoins;
         receipt = suilendResult.receipt;
-        logger.info('Using Suilend flashloan');
+        logger.info(`Using Suilend flashloan (reserve ${reserveIndex})`);
       } else {
-        const naviResult = await borrowFromNavi(tx, amount, COIN_TYPES.USDC);
+        // For Navi, pool_id=3 is typically native USDC
+        // In production, this should be dynamically discovered from storage
+        const poolId = 3;
+        const naviResult = await borrowFromNavi(tx, amount, COIN_TYPES.USDC, poolId);
         borrowedCoins = naviResult.borrowedCoins;
         receipt = naviResult.receipt;
-        logger.info('Using Navi flashloan');
+        logger.info(`Using Navi flashloan (pool ${poolId})`);
       }
     } catch (error) {
       logger.error('Flashloan borrow failed', error);
@@ -263,9 +269,11 @@ export async function executeFlashloanArb(
     logger.info('Step 5: Repaying flashloan');
 
     if (useSuilend) {
-      repayToSuilend(tx, receipt, repayCoins, COIN_TYPES.USDC);
+      const reserveIndex = 0; // Must match borrow
+      repayToSuilend(tx, receipt, repayCoins, COIN_TYPES.USDC, reserveIndex);
     } else {
-      repayToNavi(tx, receipt, repayCoins, COIN_TYPES.USDC);
+      const poolId = 3; // Must match borrow
+      repayToNavi(tx, receipt, repayCoins, COIN_TYPES.USDC, poolId);
     }
 
     // Step 6: Transfer profit to wallet

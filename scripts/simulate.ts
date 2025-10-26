@@ -74,8 +74,8 @@ async function simulateArbitrage() {
     const secondSwapMinOut = repayAmount + BigInt(config.minProfitUsdc * 1e6); // Must cover repay + min profit
 
     console.log('=== Slippage Protection ===');
-    console.log(`First swap min_out: ${firstSwapMinOut} SUI (${config.maxSlippagePercent}% slippage)`);
-    console.log(`Second swap min_out: ${secondSwapMinOut} USDC (repay + min profit)\n`);
+    console.log(`First swap amount_limit (min_out): ${firstSwapMinOut} SUI (${config.maxSlippagePercent}% slippage)`);
+    console.log(`Second swap amount_limit (min_out): ${secondSwapMinOut} USDC (repay + min profit)\n`);
 
     // Check profitability
     const estimatedProfit = secondSwapQuote.amountOut - repayAmount;
@@ -108,7 +108,7 @@ async function simulateArbitrage() {
       `  Pool: ${buyCheapOnCetus ? resolved.cetus.suiUsdcPool.poolId : resolved.turbos.suiUsdcPool.poolId}`
     );
     console.log(`  Amount In: ${flashloanAmount} USDC`);
-    console.log(`  Min Out: ${firstSwapMinOut} SUI`);
+    console.log(`  Amount Limit (min_out): ${firstSwapMinOut} SUI`);
     console.log(
       `  Sqrt Price Limit: ${buyCheapOnCetus ? cetusQuoteB2A.sqrtPriceLimit : turbosQuoteB2A.sqrtPriceLimit}`
     );
@@ -119,7 +119,7 @@ async function simulateArbitrage() {
       `  Pool: ${buyCheapOnCetus ? resolved.turbos.suiUsdcPool.poolId : resolved.cetus.suiUsdcPool.poolId}`
     );
     console.log(`  Amount In: ${firstSwapOut} SUI`);
-    console.log(`  Min Out: ${secondSwapMinOut} USDC`);
+    console.log(`  Amount Limit (min_out): ${secondSwapMinOut} USDC`);
     console.log(`  Sqrt Price Limit: ${secondSwapQuote.sqrtPriceLimit}`);
     console.log();
 

@@ -54,6 +54,11 @@ export const CETUS = {
     'CETUS_PACKAGE_ID',
     '0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb'
   ),
+  // Cetus CLMM Integration package (for GlobalConfig)
+  integrationPackageId: getAddress(
+    'CETUS_CLMM_INTEGRATION',
+    '0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3'
+  ),
   // Global config and pool IDs - to be resolved dynamically at startup
   globalConfigId: getAddress('CETUS_GLOBAL_CONFIG_ID', ''),
   suiUsdcPoolId: getAddress('CETUS_SUI_USDC_POOL_ID', ''),

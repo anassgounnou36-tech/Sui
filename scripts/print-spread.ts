@@ -1,8 +1,8 @@
 import { config } from '../src/config';
 import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
 import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
-import { getCetusPrice, getCetusPoolInfo } from '../src/cetusIntegration';
-import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbosIntegration';
+import { getCetusPrice, getCetusPoolInfo, quoteCetusSwapB2A } from '../src/cetusIntegration';
+import { getTurbosPrice, getTurbosPoolInfo, quoteTurbosSwapB2A } from '../src/turbosIntegration';
 
 /**
  * Calculate spread percentage between two prices
@@ -52,6 +52,33 @@ async function printSpread() {
     console.log(`  Absolute Spread: ${Math.abs(cetusPrice - turbosPrice).toFixed(6)} USDC`);
     console.log(`  Percentage Spread: ${spread.toFixed(4)}%`);
     console.log(`  Direction: ${spreadDirection} (buy cheaper, sell higher)`);
+    console.log();
+
+    // Get executable quotes at configured flashloan size
+    const flashloanAmountBigInt = BigInt(config.flashloanAmount);
+    console.log(`Fetching executable quotes at ${config.flashloanAmount / 1e6} USDC...\n`);
+
+    const quoteResults = await Promise.allSettled([
+      quoteCetusSwapB2A(flashloanAmountBigInt),
+      quoteTurbosSwapB2A(flashloanAmountBigInt),
+    ]);
+
+    console.log('Executable Quotes (USDC -> SUI):');
+    
+    if (quoteResults[0].status === 'fulfilled') {
+      const cetusQuote = quoteResults[0].value;
+      console.log(`  Cetus:  ${cetusQuote.amountOut} SUI (limit: ${cetusQuote.sqrtPriceLimit})`);
+    } else {
+      console.log(`  Cetus:  ⚠️  Failed to fetch quote - ${quoteResults[0].reason?.message || quoteResults[0].reason}`);
+    }
+
+    if (quoteResults[1].status === 'fulfilled') {
+      const turbosQuote = quoteResults[1].value;
+      console.log(`  Turbos: ${turbosQuote.amountOut} SUI (limit: ${turbosQuote.sqrtPriceLimit})`);
+    } else {
+      console.log(`  Turbos: ⚠️  Failed to fetch quote - ${quoteResults[1].reason?.message || quoteResults[1].reason}`);
+    }
+    
     console.log();
 
     // Profitability analysis with real flashloan size
