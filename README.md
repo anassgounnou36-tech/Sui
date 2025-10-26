@@ -29,7 +29,7 @@ A production-ready TypeScript bot that performs atomic spot-to-spot arbitrage be
 
 ## Prerequisites
 
-- Node.js 20.x or higher
+- Node.js 20.0.0 or higher
 - Docker and Docker Compose (for containerized deployment)
 - A Sui wallet with:
   - SUI tokens for gas fees (minimum 0.1 SUI recommended)
@@ -489,7 +489,7 @@ Contributions welcome! Please:
 ### Build and Installation Issues
 
 **Problem**: TypeScript build errors with "Cannot find module" or import errors
-- **Solution**: Ensure you're using Node.js 20.x or higher. Run `node --version` to check.
+- **Solution**: Ensure you're using Node.js 20.0.0 or higher. Run `node --version` to check.
 - **Solution**: Delete `node_modules` and `package-lock.json`, then run `npm install` again.
 - **Solution**: Verify that the project has `"type": "module"` in package.json for ESM support.
 
@@ -498,7 +498,7 @@ Contributions welcome! Please:
 - **Solution**: Check that import statements in TypeScript files include `.js` extensions for relative imports.
 
 **Problem**: Decimal.js constructor errors during build
-- **Solution**: Ensure you're importing Decimal correctly: `import { Decimal } from 'decimal.js';` (not default import).
+- **Solution**: Ensure you're using the named import syntax: `import { Decimal } from 'decimal.js';` instead of the default import `import Decimal from 'decimal.js';`.
 
 ### Runtime Issues
 
