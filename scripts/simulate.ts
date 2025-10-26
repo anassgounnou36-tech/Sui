@@ -4,6 +4,7 @@ import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
 import { quoteCetusPoolSwapB2A, quoteCetusPoolSwapA2B } from '../src/cetusIntegration';
 import { SUILEND, CETUS, COIN_TYPES } from '../src/addresses';
 import { calculateMinOut } from '../src/slippage';
+import { getExecutablePriceUsdcPerSui } from '../src/lib/cetusPrice';
 
 /**
  * Simulate the complete arbitrage PTB for Cetus fee-tier arbitrage
@@ -32,6 +33,15 @@ async function simulateArbitrage() {
     // Get flashloan amount from config (SUI)
     const flashloanAmount = BigInt(config.flashloanAmount);
     console.log(`Flashloan Amount: ${flashloanAmount} (${Number(flashloanAmount) / 1e9} SUI)\n`);
+
+    // Display current prices using shared helper
+    console.log('Current Prices (USDC per SUI):');
+    const [price005, price025] = await Promise.all([
+      getExecutablePriceUsdcPerSui(pools.pool005.poolId, flashloanAmount),
+      getExecutablePriceUsdcPerSui(pools.pool025.poolId, flashloanAmount),
+    ]);
+    console.log(`  0.05% pool: ${price005.toFixed(6)} USDC/SUI`);
+    console.log(`  0.25% pool: ${price025.toFixed(6)} USDC/SUI\n`);
 
     // Get quotes from both Cetus pools
     console.log('Fetching quotes...');
