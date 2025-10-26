@@ -228,8 +228,8 @@ async function resolveCetusPoolByFeeTier(
         coinTypeA === COIN_TYPES.BRIDGED_USDC || coinTypeB === COIN_TYPES.BRIDGED_USDC;
 
       // Hard fail on Wormhole USDC
-      if (coinTypeA.includes('5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf') ||
-          coinTypeB.includes('5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf')) {
+      if (coinTypeA.includes(COIN_TYPES.WORMHOLE_USDC_HASH) ||
+          coinTypeB.includes(COIN_TYPES.WORMHOLE_USDC_HASH)) {
         throw new Error(
           `Pool contains Wormhole USDC which is not supported for fee-tier arbitrage.\n` +
           `Expected bridged USDC: ${COIN_TYPES.BRIDGED_USDC}\n` +
@@ -238,8 +238,8 @@ async function resolveCetusPoolByFeeTier(
       }
 
       // Hard fail on native USDC
-      if (coinTypeA.includes('af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5') ||
-          coinTypeB.includes('af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5')) {
+      if (coinTypeA.includes(COIN_TYPES.NATIVE_USDC_HASH) ||
+          coinTypeB.includes(COIN_TYPES.NATIVE_USDC_HASH)) {
         throw new Error(
           `Pool contains native USDC which is not supported for fee-tier arbitrage.\n` +
           `Expected bridged USDC: ${COIN_TYPES.BRIDGED_USDC}\n` +

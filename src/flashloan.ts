@@ -42,7 +42,7 @@ export async function discoverSuilendReserveIndex(coinType: string): Promise<num
     if (coinType === COIN_TYPES.SUI) {
       logger.warn('Could not find SUI reserve dynamically, using default index 0');
       return 0;
-    } else if (coinType === COIN_TYPES.USDC || coinType === COIN_TYPES.NATIVE_USDC) {
+    } else if (coinType === COIN_TYPES.USDC) {
       logger.warn('Could not find USDC reserve dynamically, using default index 0');
       return 0;
     }
@@ -299,6 +299,7 @@ export function calculateRepayAmount(borrowAmount: bigint, feePercent: number): 
   // Calculate fee with ceiling: fee = ceil(principal * feePercent)
   // Using formula: ceil(a/b) = (a + b - 1) / b
   const feeRate = BigInt(Math.floor(feePercent * 10000)); // Convert to basis points
-  const fee = (borrowAmount * feeRate + BigInt(9999)) / BigInt(10000);
+  const denominator = BigInt(10000);
+  const fee = (borrowAmount * feeRate + denominator - BigInt(1)) / denominator;
   return borrowAmount + fee;
 }

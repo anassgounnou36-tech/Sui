@@ -8,9 +8,11 @@ function getAddress(envKey: string, defaultValue: string): string {
 
 // Native USDC (recommended)
 const NATIVE_USDC = '0xaf8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN';
+const NATIVE_USDC_HASH = 'af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5';
 
 // Wormhole wrapped USDC (legacy, not recommended)
 const WORMHOLE_USDC = '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN';
+const WORMHOLE_USDC_HASH = '5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf';
 
 // Bridged USDC (legacy/Circle bridged, used in some Cetus pools)
 const BRIDGED_USDC = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC';
@@ -25,6 +27,9 @@ export const COIN_TYPES = {
   // Reference constants
   NATIVE_USDC,
   WORMHOLE_USDC,
+  // Hash constants for partial matching
+  NATIVE_USDC_HASH,
+  WORMHOLE_USDC_HASH,
 };
 
 // Suilend Configuration
