@@ -176,7 +176,7 @@ async function resolveCetusPoolByFeeTier(
   envKey: string,
   defaultPoolId: string
 ): Promise<PoolMetadata> {
-  const feePercent = (feeTier / 100).toFixed(2);
+  const feePercent = (feeTier / 10000).toFixed(2);
   logger.info(`Resolving Cetus pool for ${feePercent}% fee tier...`);
 
   // Pool ID: Use env override if provided, otherwise use default
@@ -231,7 +231,7 @@ async function resolveCetusPoolByFeeTier(
     const poolFeeRate = Number(fields.fee_rate || fields.fee || 500);
     if (isOverride && poolFeeRate !== feeTier) {
       throw new Error(
-        `Env override pool has fee ${(poolFeeRate / 100).toFixed(2)}%, expected ${feePercent}%`
+        `Env override pool has fee ${(poolFeeRate / 10000).toFixed(2)}%, expected ${feePercent}%`
       );
     }
 
@@ -251,7 +251,7 @@ async function resolveCetusPoolByFeeTier(
     logger.success(`✓ Cetus ${feePercent}% pool resolved: ${poolId}`);
     logger.info(`  Coin A: ${coinTypeA.split('::').pop()}`);
     logger.info(`  Coin B: ${coinTypeB.split('::').pop()}`);
-    logger.info(`  Fee: ${(poolFeeRate / 100).toFixed(2)}%`);
+    logger.info(`  Fee: ${(poolFeeRate / 10000).toFixed(2)}%`);
     logger.info(`  SqrtPrice: ${currentSqrtPrice}`);
 
     return poolMetadata;

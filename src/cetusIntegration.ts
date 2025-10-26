@@ -11,6 +11,13 @@ import { getResolvedAddresses, calculatePriceFromSqrtPrice, validatePrice } from
 import { Transaction } from '@mysten/sui/transactions';
 import Decimal from 'decimal.js';
 
+// Pool metadata type for specific pool operations
+export interface CetusPoolMetadata {
+  poolId: string;
+  coinTypeA: string;
+  coinTypeB: string;
+}
+
 // Price and quote cache
 interface PriceCache {
   price: number;
@@ -449,7 +456,7 @@ export async function getCetusPriceByPool(poolMeta: {
  * @returns Quote with expected output and sqrt_price_limit
  */
 export async function quoteCetusPoolSwapB2A(
-  poolMeta: { poolId: string; coinTypeA: string; coinTypeB: string },
+  poolMeta: CetusPoolMetadata,
   amountIn: bigint,
   feePercent: number
 ): Promise<QuoteResult> {
@@ -460,8 +467,10 @@ export async function quoteCetusPoolSwapB2A(
     const price = await getCetusPriceByPool(poolMeta);
 
     // Safety check: reject if price is implausible
-    if (!validatePrice(price, 'Cetus')) {
-      throw new Error(`Cetus price ${price} failed sanity check`);
+    if (!validatePrice(price, `Cetus pool ${poolMeta.poolId.slice(0, 10)}...`)) {
+      throw new Error(
+        `Cetus price ${price} failed sanity check for pool ${poolMeta.poolId}`
+      );
     }
 
     // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
@@ -520,7 +529,7 @@ export async function quoteCetusPoolSwapB2A(
  * @returns Quote with expected output and sqrt_price_limit
  */
 export async function quoteCetusPoolSwapA2B(
-  poolMeta: { poolId: string; coinTypeA: string; coinTypeB: string },
+  poolMeta: CetusPoolMetadata,
   amountIn: bigint,
   feePercent: number
 ): Promise<QuoteResult> {
@@ -531,8 +540,10 @@ export async function quoteCetusPoolSwapA2B(
     const price = await getCetusPriceByPool(poolMeta);
 
     // Safety check: reject if price is implausible
-    if (!validatePrice(price, 'Cetus')) {
-      throw new Error(`Cetus price ${price} failed sanity check`);
+    if (!validatePrice(price, `Cetus pool ${poolMeta.poolId.slice(0, 10)}...`)) {
+      throw new Error(
+        `Cetus price ${price} failed sanity check for pool ${poolMeta.poolId}`
+      );
     }
 
     // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
@@ -597,7 +608,7 @@ export async function quoteCetusPoolSwapA2B(
  */
 export function buildCetusPoolSwap(
   tx: Transaction,
-  poolMeta: { poolId: string; coinTypeA: string; coinTypeB: string },
+  poolMeta: CetusPoolMetadata,
   globalConfigId: string,
   inputCoin: any,
   amountIn: bigint,
