@@ -1,8 +1,8 @@
 import { config } from '../src/config';
 import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
 import { resolvePoolAddresses, getResolvedAddresses } from '../src/resolve';
-import { getCetusPrice, getCetusPoolInfo } from '../src/cetusIntegration';
-import { getTurbosPrice, getTurbosPoolInfo } from '../src/turbosIntegration';
+import { getCetusPrice, getCetusPoolInfo, quoteCetusSwapB2A } from '../src/cetusIntegration';
+import { getTurbosPrice, getTurbosPoolInfo, quoteTurbosSwapB2A } from '../src/turbosIntegration';
 
 /**
  * Calculate spread percentage between two prices
@@ -53,6 +53,25 @@ async function printSpread() {
     console.log(`  Percentage Spread: ${spread.toFixed(4)}%`);
     console.log(`  Direction: ${spreadDirection} (buy cheaper, sell higher)`);
     console.log();
+
+    // Get executable quotes at configured flashloan size
+    const flashloanAmountBigInt = BigInt(config.flashloanAmount);
+    console.log(`Fetching executable quotes at ${config.flashloanAmount / 1e6} USDC...\n`);
+
+    try {
+      const [cetusQuote, turbosQuote] = await Promise.all([
+        quoteCetusSwapB2A(flashloanAmountBigInt),
+        quoteTurbosSwapB2A(flashloanAmountBigInt),
+      ]);
+
+      console.log('Executable Quotes (USDC -> SUI):');
+      console.log(`  Cetus:  ${cetusQuote.amountOut} SUI (limit: ${cetusQuote.sqrtPriceLimit})`);
+      console.log(`  Turbos: ${turbosQuote.amountOut} SUI (limit: ${turbosQuote.sqrtPriceLimit})`);
+      console.log();
+    } catch (error) {
+      console.log('⚠️  Could not fetch executable quotes:', error);
+      console.log();
+    }
 
     // Profitability analysis with real flashloan size
     const minSpread = config.minSpreadPercent;
