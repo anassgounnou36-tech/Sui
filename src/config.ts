@@ -30,8 +30,14 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
   return value.toLowerCase() === 'true';
 }
 
+// Strategy mode type
+export type StrategyMode = 'CETUS_TURBOS' | 'CETUS_FEE_TIER_ARB';
+
 // Configuration constants
 export const config = {
+  // Strategy mode
+  mode: getEnvString('MODE', 'CETUS_TURBOS') as StrategyMode,
+
   // Multi-RPC Configuration with failover
   rpcEndpoints: {
     primary: getEnvString(
@@ -103,6 +109,13 @@ export const config = {
 
 // Validate critical configuration
 export function validateConfig(): void {
+  // Validate mode
+  if (config.mode !== 'CETUS_TURBOS' && config.mode !== 'CETUS_FEE_TIER_ARB') {
+    throw new Error(
+      `Invalid MODE: ${config.mode}. Must be CETUS_TURBOS or CETUS_FEE_TIER_ARB`
+    );
+  }
+
   if (!config.dryRun) {
     if (!config.privateKey || config.privateKey === 'your_private_key_here') {
       throw new Error('PRIVATE_KEY must be set for live trading');

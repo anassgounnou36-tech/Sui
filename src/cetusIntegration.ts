@@ -373,3 +373,266 @@ export async function getCetusPoolInfo(): Promise<any> {
     throw error;
   }
 }
+
+/**
+ * Get price from a specific Cetus pool by pool metadata
+ * @param poolMeta Pool metadata with poolId and coin types
+ * @returns Price in USDC per SUI
+ */
+export async function getCetusPriceByPool(poolMeta: {
+  poolId: string;
+  coinTypeA: string;
+  coinTypeB: string;
+}): Promise<number> {
+  try {
+    const client = getSuiClient();
+
+    // Fetch pool object
+    const poolObject = await client.getObject({
+      id: poolMeta.poolId,
+      options: {
+        showContent: true,
+      },
+    });
+
+    if (!poolObject.data || !poolObject.data.content) {
+      throw new Error('Cetus pool data not found');
+    }
+
+    const content = poolObject.data.content as any;
+    if (content.dataType !== 'moveObject') {
+      throw new Error('Invalid pool object type');
+    }
+
+    const fields = content.fields;
+
+    // Extract sqrt_price from pool state
+    const sqrtPriceStr = fields.current_sqrt_price || fields.sqrt_price;
+    if (!sqrtPriceStr) {
+      throw new Error('sqrtPrice not found in pool state');
+    }
+
+    // Determine coin ordering
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // Calculate price based on coin ordering
+    let price: number;
+
+    if (suiIsCoinA) {
+      // Pool is SUI/USDC, price is in USDC per SUI (what we want)
+      price = calculatePriceFromSqrtPrice(sqrtPriceStr, 9, 6); // SUI decimals=9, USDC=6
+    } else {
+      // Pool is USDC/SUI, price is in SUI per USDC (need to invert)
+      const inversePrice = calculatePriceFromSqrtPrice(sqrtPriceStr, 6, 9);
+      price = 1 / inversePrice;
+    }
+
+    // Sanity check the price
+    if (!validatePrice(price, `Cetus pool ${poolMeta.poolId.slice(0, 10)}...`)) {
+      throw new Error(
+        `Price ${price.toFixed(6)} USDC/SUI failed sanity check for pool ${poolMeta.poolId}`
+      );
+    }
+
+    return price;
+  } catch (error) {
+    logger.error(`Failed to get price from Cetus pool ${poolMeta.poolId}`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get executable quote for a specific Cetus pool (USDC -> SUI)
+ * @param poolMeta Pool metadata
+ * @param amountIn Amount of USDC to swap (in smallest units)
+ * @param feePercent Fee percentage for this pool
+ * @returns Quote with expected output and sqrt_price_limit
+ */
+export async function quoteCetusPoolSwapB2A(
+  poolMeta: { poolId: string; coinTypeA: string; coinTypeB: string },
+  amountIn: bigint,
+  feePercent: number
+): Promise<QuoteResult> {
+  try {
+    const client = getSuiClient();
+
+    // Get current price from this specific pool
+    const price = await getCetusPriceByPool(poolMeta);
+
+    // Safety check: reject if price is implausible
+    if (!validatePrice(price, 'Cetus')) {
+      throw new Error(`Cetus price ${price} failed sanity check`);
+    }
+
+    // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
+    const usdcAmount = new Decimal(amountIn.toString()).div(1e6);
+    const suiAmount = usdcAmount.div(price);
+    const suiSmallestUnit = suiAmount.mul(1e9);
+
+    // Apply fee
+    const feeMultiplier = new Decimal(1).minus(feePercent / 100);
+    const amountOutAfterFee = suiSmallestUnit.mul(feeMultiplier);
+
+    // Safety check: ensure output is not zero or negative
+    if (amountOutAfterFee.lte(0)) {
+      throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
+    }
+
+    // Calculate sqrt_price_limit (1% slippage from current)
+    const poolObject = await client.getObject({
+      id: poolMeta.poolId,
+      options: { showContent: true },
+    });
+
+    const content = poolObject.data?.content as any;
+    const currentSqrtPrice = new Decimal(
+      content.fields.current_sqrt_price || content.fields.sqrt_price
+    );
+
+    // Determine direction based on coin ordering
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // For USDC->SUI swap: price moves up if SUI is A, down if USDC is A
+    const slippageMultiplier = suiIsCoinA
+      ? new Decimal(1).plus(config.maxSlippagePercent / 100)
+      : new Decimal(1).minus(config.maxSlippagePercent / 100);
+
+    const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
+
+    const quote: QuoteResult = {
+      amountOut: BigInt(amountOutAfterFee.toFixed(0)),
+      sqrtPriceLimit,
+      priceImpact: 0.1,
+    };
+
+    return quote;
+  } catch (error) {
+    logger.error('Failed to quote Cetus pool swap B2A', error);
+    throw error;
+  }
+}
+
+/**
+ * Get executable quote for a specific Cetus pool (SUI -> USDC)
+ * @param poolMeta Pool metadata
+ * @param amountIn Amount of SUI to swap (in smallest units)
+ * @param feePercent Fee percentage for this pool
+ * @returns Quote with expected output and sqrt_price_limit
+ */
+export async function quoteCetusPoolSwapA2B(
+  poolMeta: { poolId: string; coinTypeA: string; coinTypeB: string },
+  amountIn: bigint,
+  feePercent: number
+): Promise<QuoteResult> {
+  try {
+    const client = getSuiClient();
+
+    // Get current price from this specific pool
+    const price = await getCetusPriceByPool(poolMeta);
+
+    // Safety check: reject if price is implausible
+    if (!validatePrice(price, 'Cetus')) {
+      throw new Error(`Cetus price ${price} failed sanity check`);
+    }
+
+    // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
+    const suiAmount = new Decimal(amountIn.toString()).div(1e9);
+    const usdcAmount = suiAmount.mul(price);
+    const usdcSmallestUnit = usdcAmount.mul(1e6);
+
+    // Apply fee
+    const feeMultiplier = new Decimal(1).minus(feePercent / 100);
+    const amountOutAfterFee = usdcSmallestUnit.mul(feeMultiplier);
+
+    // Safety check: ensure output is not zero or negative
+    if (amountOutAfterFee.lte(0)) {
+      throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
+    }
+
+    // Calculate sqrt_price_limit (1% slippage from current)
+    const poolObject = await client.getObject({
+      id: poolMeta.poolId,
+      options: { showContent: true },
+    });
+
+    const content = poolObject.data?.content as any;
+    const currentSqrtPrice = new Decimal(
+      content.fields.current_sqrt_price || content.fields.sqrt_price
+    );
+
+    // Determine direction based on coin ordering
+    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+
+    // For SUI->USDC swap: price moves down if SUI is A, up if USDC is A
+    const slippageMultiplier = suiIsCoinA
+      ? new Decimal(1).minus(config.maxSlippagePercent / 100)
+      : new Decimal(1).plus(config.maxSlippagePercent / 100);
+
+    const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
+
+    const quote: QuoteResult = {
+      amountOut: BigInt(amountOutAfterFee.toFixed(0)),
+      sqrtPriceLimit,
+      priceImpact: 0.1,
+    };
+
+    return quote;
+  } catch (error) {
+    logger.error('Failed to quote Cetus pool swap A2B', error);
+    throw error;
+  }
+}
+
+/**
+ * Build swap transaction for a specific Cetus pool
+ * @param tx Transaction builder
+ * @param poolMeta Pool metadata (poolId, coinTypeA, coinTypeB)
+ * @param globalConfigId Cetus global config ID
+ * @param inputCoin Input coin object
+ * @param amountIn Amount to swap
+ * @param minAmountOut Minimum output amount (slippage protection)
+ * @param sqrtPriceLimit Price limit for swap
+ * @param a2b Direction: true for A->B, false for B->A
+ * @returns Output coin object
+ */
+export function buildCetusPoolSwap(
+  tx: Transaction,
+  poolMeta: { poolId: string; coinTypeA: string; coinTypeB: string },
+  globalConfigId: string,
+  inputCoin: any,
+  amountIn: bigint,
+  minAmountOut: bigint,
+  sqrtPriceLimit: string,
+  a2b: boolean
+): any {
+  logger.debug(
+    `Building Cetus pool swap: pool=${poolMeta.poolId.slice(0, 10)}..., amount=${amountIn}, minOut=${minAmountOut}, a2b=${a2b}`
+  );
+
+  const coinTypeA = poolMeta.coinTypeA;
+  const coinTypeB = poolMeta.coinTypeB;
+
+  // Create coins for both sides
+  const [coinA, coinB] = a2b
+    ? [inputCoin, tx.splitCoins(tx.gas, [tx.pure.u64('0')])]
+    : [tx.splitCoins(tx.gas, [tx.pure.u64('0')]), inputCoin];
+
+  const [outputCoinA, outputCoinB] = tx.moveCall({
+    target: `${CETUS.packageId}::pool::swap`,
+    arguments: [
+      tx.object(globalConfigId),
+      tx.object(poolMeta.poolId),
+      coinA,
+      coinB,
+      tx.pure.bool(a2b),
+      tx.pure.bool(true), // by_amount_in
+      tx.pure.u64(amountIn.toString()),
+      tx.pure.u64(minAmountOut.toString()),
+      tx.pure.u128(sqrtPriceLimit),
+      tx.object('0x6'), // Clock object
+    ],
+    typeArguments: [coinTypeA, coinTypeB],
+  });
+
+  return a2b ? outputCoinB : outputCoinA;
+}

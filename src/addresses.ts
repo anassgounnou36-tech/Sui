@@ -60,9 +60,15 @@ export const CETUS = {
     '0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3'
   ),
   // Global config and pool IDs - to be resolved dynamically at startup
-  globalConfigId: getAddress('CETUS_GLOBAL_CONFIG_ID', ''),
+  globalConfigId: getAddress(
+    'CETUS_GLOBAL_CONFIG_ID',
+    '0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3'
+  ),
   suiUsdcPoolId: getAddress('CETUS_SUI_USDC_POOL_ID', ''),
   suiUsdcPoolAddress: getAddress('CETUS_SUI_USDC_POOL_ADDRESS', ''),
+  // Fee-tier specific pools for CETUS_FEE_TIER_ARB mode
+  suiUsdcPool005Id: getAddress('CETUS_POOL_ID_005', ''), // 0.05% fee tier
+  suiUsdcPool025Id: getAddress('CETUS_POOL_ID_025', ''), // 0.25% fee tier
 };
 
 // Turbos DEX Configuration

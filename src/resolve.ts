@@ -26,6 +26,9 @@ export interface ResolvedAddresses {
   cetus: {
     globalConfigId: string;
     suiUsdcPool: PoolMetadata;
+    // Fee-tier specific pools for CETUS_FEE_TIER_ARB mode
+    suiUsdcPool005?: PoolMetadata; // 0.05% fee tier
+    suiUsdcPool025?: PoolMetadata; // 0.25% fee tier
   };
   turbos: {
     factoryId: string;
@@ -155,6 +158,106 @@ async function resolveCetusPool(client: SuiClient): Promise<{
   } catch (error) {
     logger.error('Failed to resolve Cetus pool', error);
     throw new Error(`Cetus pool resolution failed: ${error}`);
+  }
+}
+
+/**
+ * Resolve a specific Cetus pool by fee tier
+ * Helper function for CETUS_FEE_TIER_ARB mode
+ * @param client SuiClient
+ * @param feeTier Fee tier in basis points (e.g., 500 for 0.05%, 2500 for 0.25%)
+ * @param envKey Environment variable key for override
+ * @param defaultPoolId Default pool ID if no override
+ * @returns Pool metadata
+ */
+async function resolveCetusPoolByFeeTier(
+  client: SuiClient,
+  feeTier: number,
+  envKey: string,
+  defaultPoolId: string
+): Promise<PoolMetadata> {
+  const feePercent = (feeTier / 100).toFixed(2);
+  logger.info(`Resolving Cetus pool for ${feePercent}% fee tier...`);
+
+  // Pool ID: Use env override if provided, otherwise use default
+  const poolId = process.env[envKey] || defaultPoolId;
+  const isOverride = !!process.env[envKey];
+  
+  if (isOverride) {
+    logger.info(`Using env override for Cetus ${feePercent}% pool: ${poolId}`);
+  }
+
+  // Verify pool exists and fetch metadata
+  try {
+    const poolObj = await client.getObject({
+      id: poolId,
+      options: { showContent: true, showType: true },
+    });
+
+    if (!poolObj.data || !poolObj.data.content) {
+      throw new Error(`Cetus pool not found: ${poolId}`);
+    }
+
+    const content = poolObj.data.content as any;
+    if (content.dataType !== 'moveObject') {
+      throw new Error('Invalid Cetus pool object type');
+    }
+
+    const fields = content.fields;
+
+    // Extract type arguments from pool type
+    const poolType = poolObj.data.type;
+    if (!poolType) {
+      throw new Error('Pool type not found');
+    }
+
+    const typeMatch = poolType.match(/<([^,]+),\s*([^,]+)/);
+    if (!typeMatch) {
+      throw new Error(`Cannot parse pool type: ${poolType}`);
+    }
+
+    const [, coinTypeA, coinTypeB] = typeMatch;
+
+    // Verify this is SUI/USDC pool
+    const hasSui = coinTypeA === COIN_TYPES.SUI || coinTypeB === COIN_TYPES.SUI;
+    const hasUsdc = coinTypeA === COIN_TYPES.USDC || coinTypeB === COIN_TYPES.USDC;
+
+    if (!hasSui || !hasUsdc) {
+      const error = `Pool does not contain SUI + native USDC. Found: ${coinTypeA}, ${coinTypeB}`;
+      throw new Error(isOverride ? `Env override pool invalid: ${error}` : error);
+    }
+
+    // Verify fee tier matches
+    const poolFeeRate = Number(fields.fee_rate || fields.fee || 500);
+    if (isOverride && poolFeeRate !== feeTier) {
+      throw new Error(
+        `Env override pool has fee ${(poolFeeRate / 100).toFixed(2)}%, expected ${feePercent}%`
+      );
+    }
+
+    // Extract pool metadata
+    const currentSqrtPrice = fields.current_sqrt_price || fields.sqrt_price;
+    const liquidity = fields.liquidity;
+
+    const poolMetadata: PoolMetadata = {
+      poolId,
+      coinTypeA,
+      coinTypeB,
+      feeTier: poolFeeRate,
+      currentSqrtPrice: currentSqrtPrice?.toString(),
+      liquidity: liquidity?.toString(),
+    };
+
+    logger.success(`✓ Cetus ${feePercent}% pool resolved: ${poolId}`);
+    logger.info(`  Coin A: ${coinTypeA.split('::').pop()}`);
+    logger.info(`  Coin B: ${coinTypeB.split('::').pop()}`);
+    logger.info(`  Fee: ${(poolFeeRate / 100).toFixed(2)}%`);
+    logger.info(`  SqrtPrice: ${currentSqrtPrice}`);
+
+    return poolMetadata;
+  } catch (error) {
+    logger.error(`Failed to resolve Cetus ${feePercent}% pool`, error);
+    throw new Error(`Cetus ${feePercent}% pool resolution failed: ${error}`);
   }
 }
 
@@ -383,7 +486,10 @@ export function calculatePriceFromSqrtPrice(
  * Resolve all pool and market addresses at startup
  * This is the single source of truth for all IDs used throughout the application
  */
-export async function resolvePoolAddresses(client: SuiClient): Promise<ResolvedAddresses> {
+export async function resolvePoolAddresses(
+  client: SuiClient,
+  mode?: string
+): Promise<ResolvedAddresses> {
   logger.info('=== Resolving Pool and Market Addresses ===');
 
   try {
@@ -401,6 +507,31 @@ export async function resolvePoolAddresses(client: SuiClient): Promise<ResolvedA
       suilend,
       navi,
     };
+
+    // For CETUS_FEE_TIER_ARB mode, resolve both 0.05% and 0.25% fee tier pools
+    if (mode === 'CETUS_FEE_TIER_ARB') {
+      logger.info('=== Resolving Cetus Fee-Tier Pools ===');
+      
+      const [pool005, pool025] = await Promise.all([
+        resolveCetusPoolByFeeTier(
+          client,
+          500, // 0.05%
+          'CETUS_POOL_ID_005',
+          '0x51e883ba7c0b566a26cbc8a94cd33eb0abd418a77cc1e60ad22fd9b1f29cd2ab'
+        ),
+        resolveCetusPoolByFeeTier(
+          client,
+          2500, // 0.25%
+          'CETUS_POOL_ID_025',
+          '0xb8d7d9e66a60c239e7a60110efcf8de6c705580ed924d0dde141f4a0e2c90105'
+        ),
+      ]);
+
+      resolved.cetus.suiUsdcPool005 = pool005;
+      resolved.cetus.suiUsdcPool025 = pool025;
+
+      logger.success('✓ Fee-tier pools resolved');
+    }
 
     // Cache the resolved addresses
     cachedAddresses = resolved;
@@ -422,18 +553,54 @@ export async function resolvePoolAddresses(client: SuiClient): Promise<ResolvedA
       );
     }
 
-    // Validate Turbos pool coin types
-    const turbosCoinA = resolved.turbos.suiUsdcPool.coinTypeA;
-    const turbosCoinB = resolved.turbos.suiUsdcPool.coinTypeB;
-    const turbosHasSui =
-      turbosCoinA === COIN_TYPES.SUI || turbosCoinB === COIN_TYPES.SUI;
-    const turbosHasUsdc =
-      turbosCoinA === COIN_TYPES.USDC || turbosCoinB === COIN_TYPES.USDC;
+    // Validate Turbos pool coin types (skip if CETUS_FEE_TIER_ARB mode)
+    if (mode !== 'CETUS_FEE_TIER_ARB') {
+      const turbosCoinA = resolved.turbos.suiUsdcPool.coinTypeA;
+      const turbosCoinB = resolved.turbos.suiUsdcPool.coinTypeB;
+      const turbosHasSui =
+        turbosCoinA === COIN_TYPES.SUI || turbosCoinB === COIN_TYPES.SUI;
+      const turbosHasUsdc =
+        turbosCoinA === COIN_TYPES.USDC || turbosCoinB === COIN_TYPES.USDC;
 
-    if (!turbosHasSui || !turbosHasUsdc) {
-      throw new Error(
-        `Turbos pool does not contain SUI and USDC. Found: ${turbosCoinA}, ${turbosCoinB}`
-      );
+      if (!turbosHasSui || !turbosHasUsdc) {
+        throw new Error(
+          `Turbos pool does not contain SUI and USDC. Found: ${turbosCoinA}, ${turbosCoinB}`
+        );
+      }
+    }
+
+    // Validate fee-tier pools if in CETUS_FEE_TIER_ARB mode
+    if (mode === 'CETUS_FEE_TIER_ARB') {
+      if (!resolved.cetus.suiUsdcPool005 || !resolved.cetus.suiUsdcPool025) {
+        throw new Error('Fee-tier pools not resolved for CETUS_FEE_TIER_ARB mode');
+      }
+
+      // Validate coin types for both pools
+      const pool005CoinA = resolved.cetus.suiUsdcPool005.coinTypeA;
+      const pool005CoinB = resolved.cetus.suiUsdcPool005.coinTypeB;
+      const pool005HasSui =
+        pool005CoinA === COIN_TYPES.SUI || pool005CoinB === COIN_TYPES.SUI;
+      const pool005HasUsdc =
+        pool005CoinA === COIN_TYPES.USDC || pool005CoinB === COIN_TYPES.USDC;
+
+      if (!pool005HasSui || !pool005HasUsdc) {
+        throw new Error(
+          `Cetus 0.05% pool invalid. Found: ${pool005CoinA}, ${pool005CoinB}`
+        );
+      }
+
+      const pool025CoinA = resolved.cetus.suiUsdcPool025.coinTypeA;
+      const pool025CoinB = resolved.cetus.suiUsdcPool025.coinTypeB;
+      const pool025HasSui =
+        pool025CoinA === COIN_TYPES.SUI || pool025CoinB === COIN_TYPES.SUI;
+      const pool025HasUsdc =
+        pool025CoinA === COIN_TYPES.USDC || pool025CoinB === COIN_TYPES.USDC;
+
+      if (!pool025HasSui || !pool025HasUsdc) {
+        throw new Error(
+          `Cetus 0.25% pool invalid. Found: ${pool025CoinA}, ${pool025CoinB}`
+        );
+      }
     }
 
     // Log summary
@@ -441,8 +608,15 @@ export async function resolvePoolAddresses(client: SuiClient): Promise<ResolvedA
     logger.info('Resolved addresses:');
     logger.info(`  Cetus Global Config: ${resolved.cetus.globalConfigId}`);
     logger.info(`  Cetus SUI/USDC Pool: ${resolved.cetus.suiUsdcPool.poolId}`);
-    logger.info(`  Turbos Factory: ${resolved.turbos.factoryId}`);
-    logger.info(`  Turbos SUI/USDC Pool: ${resolved.turbos.suiUsdcPool.poolId}`);
+    
+    if (mode === 'CETUS_FEE_TIER_ARB') {
+      logger.info(`  Cetus 0.05% Pool: ${resolved.cetus.suiUsdcPool005?.poolId}`);
+      logger.info(`  Cetus 0.25% Pool: ${resolved.cetus.suiUsdcPool025?.poolId}`);
+    } else {
+      logger.info(`  Turbos Factory: ${resolved.turbos.factoryId}`);
+      logger.info(`  Turbos SUI/USDC Pool: ${resolved.turbos.suiUsdcPool.poolId}`);
+    }
+    
     logger.info(`  Suilend Lending Market: ${resolved.suilend.lendingMarket}`);
     logger.info(`  Navi Storage: ${resolved.navi.storageId}`);
 
@@ -459,4 +633,29 @@ export async function resolvePoolAddresses(client: SuiClient): Promise<ResolvedA
 export function clearCachedAddresses(): void {
   cachedAddresses = null;
   logger.debug('Cached addresses cleared');
+}
+
+/**
+ * Get both Cetus pools for fee-tier arbitrage
+ * Returns pool metadata with coin ordering information
+ * Only available when MODE=CETUS_FEE_TIER_ARB and pools have been resolved
+ */
+export function getCetusPools(): {
+  pool005: PoolMetadata;
+  pool025: PoolMetadata;
+  globalConfigId: string;
+} {
+  const resolved = getResolvedAddresses();
+  
+  if (!resolved.cetus.suiUsdcPool005 || !resolved.cetus.suiUsdcPool025) {
+    throw new Error(
+      'Fee-tier pools not available. Ensure MODE=CETUS_FEE_TIER_ARB and pools are resolved.'
+    );
+  }
+
+  return {
+    pool005: resolved.cetus.suiUsdcPool005,
+    pool025: resolved.cetus.suiUsdcPool025,
+    globalConfigId: resolved.cetus.globalConfigId,
+  };
 }
