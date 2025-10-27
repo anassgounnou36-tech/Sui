@@ -47,6 +47,9 @@ async function simulateArbitrage() {
     // Read Suilend reserve config for dynamic fee
     console.log('Reading Suilend reserve configuration...');
     const reserveConfig = await readSuilendReserveConfig(COIN_TYPES.SUI);
+    console.log(`  Reserve Index: ${reserveConfig.reserveIndex}`);
+    console.log(`  Borrow Fee: ${reserveConfig.borrowFeeBps} bps (${Number(reserveConfig.borrowFeeBps) / 100}%)`);
+    console.log(`  Available Amount: ${smallestUnitToSui(reserveConfig.availableAmount).toFixed(2)} SUI`);
     console.log();
 
     // Get quotes from both Cetus pools
@@ -136,7 +139,6 @@ async function simulateArbitrage() {
     console.log(`  Profit Coins: ${smallestUnitToSui(estimatedProfit > 0 ? estimatedProfit : BigInt(0)).toFixed(6)} SUI`);
     console.log();
 
-    console.log('Step 5: Repay Suilend flashloan');
     console.log('Step 5: Repay Suilend flashloan');
     console.log(`  Package: ${SUILEND.packageId}`);
     console.log(`  Market: ${SUILEND.lendingMarket}`);

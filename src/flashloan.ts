@@ -59,7 +59,7 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
           ? smallestUnitToSui(availableAmount) 
           : smallestUnitToUsdc(availableAmount);
         const unit = isSui ? 'SUI' : 'USDC';
-        logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit} (${availableAmount} base units)`);
+        logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit}`);
         
         return {
           reserveIndex: i,
@@ -70,28 +70,60 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
       }
     }
 
-    // Default fallback based on common knowledge
-    if (coinType === COIN_TYPES.SUI) {
-      logger.warn('Could not find SUI reserve dynamically, using defaults');
+    // If not found, handle based on mode
+    const errorMsg = `Could not find reserve for coin type ${coinType} in Suilend lending market.`;
+    
+    if (config.dryRun) {
+      // In simulation/dry-run mode, allow fallback with clear warning
+      logger.warn(errorMsg);
+      logger.warn('Using default reserve config for simulation purposes.');
+      logger.warn('In live mode (DRY_RUN=false), this would fail.');
+      logger.warn('To fix: Check SUILEND_LENDING_MARKET is correct and reserve exists.');
+      
       return {
         reserveIndex: 0,
         borrowFeeBps: BigInt(5), // 0.05%
-        availableAmount: BigInt('1000000000000000'), // Large default
+        availableAmount: BigInt('1000000000000000'), // Large default for simulation
         coinType,
       };
+    } else {
+      // In live mode, fail explicitly with guidance
+      logger.error(errorMsg);
+      logger.error('Reserve discovery failed. Cannot proceed in live mode.');
+      logger.error('Please verify:');
+      logger.error('  1. SUILEND_LENDING_MARKET is set correctly in .env');
+      logger.error('  2. The lending market contains a reserve for the coin type');
+      logger.error(`  3. Coin type matches exactly: ${coinType}`);
+      throw new Error(
+        `${errorMsg} Cannot proceed in live mode. ` +
+        `Verify SUILEND_LENDING_MARKET and reserve configuration.`
+      );
     }
-
-    throw new Error(`No reserve found for coin type ${coinType} in Suilend`);
   } catch (error) {
+    // For unexpected errors (network, parsing, etc.)
     logger.error('Failed to read Suilend reserve config', error);
-    // Return safe defaults
-    logger.warn('Using default reserve config as fallback');
-    return {
-      reserveIndex: 0,
-      borrowFeeBps: BigInt(5), // 0.05%
-      availableAmount: BigInt('1000000000000000'), // Large default
-      coinType,
-    };
+    
+    if (config.dryRun) {
+      // In simulation, allow fallback but log prominently
+      logger.warn('Network or parsing error while reading Suilend reserve.');
+      logger.warn('Using default reserve config for simulation purposes.');
+      logger.warn('In live mode (DRY_RUN=false), this would fail.');
+      
+      return {
+        reserveIndex: 0,
+        borrowFeeBps: BigInt(5), // 0.05%
+        availableAmount: BigInt('1000000000000000'), // Large default for simulation
+        coinType,
+      };
+    } else {
+      // In live mode, fail with clear guidance
+      logger.error('Cannot read Suilend reserve configuration in live mode.');
+      logger.error('Possible causes:');
+      logger.error('  1. Network connectivity issue');
+      logger.error('  2. RPC endpoint not responding');
+      logger.error('  3. Suilend lending market object changed structure');
+      throw error;
+    }
   }
 }
 
@@ -129,21 +161,30 @@ export async function borrowFromSuilend(
     const safetyBuffer = BigInt(config.suilendSafetyBuffer);
     const maxBorrow = finalConfig.availableAmount - safetyBuffer;
     
+    // Helper for unit conversion
+    const isSui = coinType === COIN_TYPES.SUI;
+    const unit = isSui ? 'SUI' : 'USDC';
+    const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
+    
     if (amount > maxBorrow) {
-      const isSui = coinType === COIN_TYPES.SUI;
-      const requestedHuman = isSui ? smallestUnitToSui(amount) : smallestUnitToUsdc(amount);
-      const availableHuman = isSui ? smallestUnitToSui(maxBorrow) : smallestUnitToUsdc(maxBorrow);
-      const unit = isSui ? 'SUI' : 'USDC';
+      const errorMsg = 
+        `Insufficient Suilend reserve capacity:\n` +
+        `  Requested: ${toHuman(amount).toFixed(2)} ${unit}\n` +
+        `  Available: ${toHuman(maxBorrow).toFixed(2)} ${unit} (after ${safetyBuffer} buffer)\n` +
+        `  Total reserve available: ${toHuman(finalConfig.availableAmount).toFixed(2)} ${unit}\n` +
+        `  Reserve index: ${finalConfig.reserveIndex}\n` +
+        `To fix: Reduce FLASHLOAN_AMOUNT or adjust SUILEND_SAFETY_BUFFER`;
       
-      throw new Error(
-        `Insufficient Suilend reserve capacity: ` +
-        `Requested ${requestedHuman.toFixed(2)} ${unit}, ` +
-        `Available ${availableHuman.toFixed(2)} ${unit} (after ${config.suilendSafetyBuffer} buffer)`
-      );
+      logger.error(errorMsg);
+      throw new Error(errorMsg);
     }
 
     logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${finalConfig.reserveIndex})`);
     logger.info(`  Fee: ${finalConfig.borrowFeeBps} bps (${Number(finalConfig.borrowFeeBps) / 100}%)`);
+    
+    // Calculate and log repay amount
+    const repayAmount = calculateRepayAmountFromBps(amount, finalConfig.borrowFeeBps);
+    logger.info(`  Repay amount: ${toHuman(repayAmount).toFixed(6)} ${unit}`);
 
     // Suilend flashloan entrypoint per Perplexity spec:
     // lending::flash_borrow(lending_market, reserve_index, amount) -> (Coin<T>, FlashLoanReceipt)
