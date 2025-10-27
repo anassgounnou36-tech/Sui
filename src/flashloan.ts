@@ -106,23 +106,21 @@ export async function readSuilendReserveConfig(
         const reserve = reserves[index];
         const reserveFields = reserve.fields || reserve;
         
-        // Parse coin type from reserve.type generic parameter
+        // Primary: Prefer coin type from TypeName path (fields.coin_type.fields.name)
+        let reserveCoinType: string | undefined = reserveFields?.coin_type?.fields?.name 
+          || reserveFields?.coin_type?.name 
+          || reserveFields?.coin_type;
+        let matchMethod: string = 'TypeName';
+        
+        // Fallback: Parse coin type from reserve.type generic parameter if TypeName path is missing
         // Format: "...::reserve::Reserve<0x2::sui::SUI>"
         // Extract the generic parameter using regex
-        let reserveCoinType: string | undefined;
-        
-        if (reserve.type && typeof reserve.type === 'string') {
+        if (!reserveCoinType && reserve.type && typeof reserve.type === 'string') {
           const match = reserve.type.match(/::reserve::Reserve<(.+)>$/);
           if (match && match[1]) {
             reserveCoinType = match[1];
+            matchMethod = 'type-string parsing (fallback)';
           }
-        }
-        
-        // Fallback: Try fields.coin_type paths (for compatibility with older structures)
-        if (!reserveCoinType) {
-          reserveCoinType = reserveFields?.coin_type?.fields?.name 
-            || reserveFields?.coin_type?.name 
-            || reserveFields?.coin_type;
         }
         
         if (reserveCoinType === targetCoinType) {
@@ -150,6 +148,7 @@ export async function readSuilendReserveConfig(
 
           logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
           logger.info(`  Reserve index: ${index}`);
+          logger.info(`  Match method: ${matchMethod}`);
           logger.info(`  Parsed coin type: ${reserveCoinType}`);
           logger.info(`  Fee (borrow_fee): ${feeBps} bps (${feeBps / 100}%)`);
           logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
