@@ -49,7 +49,6 @@ const targetCoinType = '0x2::sui::SUI';
 const typePattern = /::reserve::Reserve<(.+)>$/;
 
 let found = false;
-let matchedIndex = -1;
 
 for (let index = 0; index < mockReserves.length; index++) {
   const reserve = mockReserves[index];
@@ -73,7 +72,6 @@ for (let index = 0; index < mockReserves.length; index++) {
   
   if (reserveCoinType === targetCoinType) {
     found = true;
-    matchedIndex = index;
     
     const reserveConfig = reserveFields?.config?.fields || reserveFields?.config;
     const borrowFee = reserveConfig?.borrow_fee || '5';
