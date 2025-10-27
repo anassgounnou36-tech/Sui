@@ -144,7 +144,7 @@ async function feeTierMonitoringLoop() {
           pools.pool025.poolId
         );
       } catch (error) {
-        logger.error('Failed to send opportunity notification', error);
+        logger.error('Failed to send Telegram opportunity notification', error);
       }
     }
 
@@ -178,7 +178,7 @@ async function feeTierMonitoringLoop() {
         try {
           await telegramNotifier.notifyExecutionStart(dir, amount, minProf, expectedProfit, isDryRun);
         } catch (error) {
-          logger.error('Failed to send execution start notification', error);
+          logger.error('Failed to send Telegram execution start notification', error);
         }
       }
     );
@@ -224,7 +224,7 @@ async function feeTierMonitoringLoop() {
           config.dryRun
         );
       } catch (error) {
-        logger.error('Failed to send execution result notification', error);
+        logger.error('Failed to send Telegram execution result notification (success)', error);
       }
 
       // Reset consecutive count after successful execution
@@ -256,7 +256,7 @@ async function feeTierMonitoringLoop() {
           result.error
         );
       } catch (error) {
-        logger.error('Failed to send execution result notification', error);
+        logger.error('Failed to send Telegram execution result notification (failure)', error);
       }
 
       // Kill switch: Stop if too many consecutive failures
