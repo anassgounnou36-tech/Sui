@@ -156,6 +156,30 @@ VERIFY_ON_CHAIN=true            # Verify pool IDs at startup (recommended)
 
 # Dry Run
 DRY_RUN=false                   # Set to true for simulation mode
+
+# Telegram Notifications (optional)
+TELEGRAM_BOT_TOKEN=             # Get from @BotFather on Telegram
+TELEGRAM_CHAT_ID=               # Get by messaging your bot and visiting:
+                                # https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
+```
+
+### Telegram Notifications
+
+The bot supports optional Telegram notifications to alert you of arbitrage opportunities and execution results.
+
+**Setup:**
+1. Create a Telegram bot by messaging [@BotFather](https://t.me/BotFather)
+2. Send `/newbot` and follow the instructions to get your `TELEGRAM_BOT_TOKEN`
+3. Start a chat with your bot and send any message
+4. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` to find your `TELEGRAM_CHAT_ID`
+5. Add both values to your `.env` file
+
+**Notifications:**
+- **Opportunity Detected**: When spread >= MIN_SPREAD_PERCENT (includes prices, spread %, direction, and pool IDs)
+- **Execution Start**: Before building/submitting the transaction (includes flashloan amount, expected profit)
+- **Execution Result**: After success/failure with transaction digest (live mode only) or error message
+
+If either `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is missing, notifications are gracefully disabled with a single log message at startup.
 ```
 
 ### Coin Types and Package IDs

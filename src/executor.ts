@@ -23,6 +23,7 @@ export interface ArbResult {
   profit?: bigint;
   txDigest?: string;
   error?: string;
+  expectedProfit?: bigint;
 }
 
 /**
@@ -341,6 +342,7 @@ export async function executeFlashloanArb(
       return {
         success: true,
         profit: expectedProfit,
+        expectedProfit,
       };
     }
 
@@ -361,6 +363,7 @@ export async function executeFlashloanArb(
       success: true,
       profit,
       txDigest: result.digest,
+      expectedProfit,
     };
   } catch (error) {
     logger.error('Arbitrage execution failed', error);
