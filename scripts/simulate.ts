@@ -4,7 +4,7 @@ import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
 import { quoteCetusPoolSwapB2A, quoteCetusPoolSwapA2B } from '../src/cetusIntegration';
 import { SUILEND, CETUS, COIN_TYPES } from '../src/addresses';
 import { calculateMinOut } from '../src/slippage';
-import { readSuilendReserveConfig, calculateRepayAmountFromBps } from '../src/flashloan';
+import { readSuilendReserveConfig, computeRepayAmountBase } from '../src/flashloan';
 
 /**
  * Simulate the complete arbitrage PTB for Cetus fee-tier arbitrage
@@ -81,8 +81,8 @@ async function simulateArbitrage() {
     console.log('USDC -> SUI (buy back):');
     console.log(`  Expected: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI\n`);
 
-    // Calculate repay amount using dynamic fee
-    const repayAmount = calculateRepayAmountFromBps(flashloanAmount, reserveConfig.borrowFeeBps);
+    // Calculate repay amount using dynamic fee with ceiling division
+    const repayAmount = computeRepayAmountBase(flashloanAmount, reserveConfig.borrowFeeBps);
     const fee = repayAmount - flashloanAmount;
 
     console.log('=== Fee Calculations ===');

@@ -16,15 +16,16 @@ export interface SuilendReserveConfig {
 
 /**
  * Read Suilend reserve configuration including fee and available borrow amount
- * @param coinType Coin type to read config for
+ * Iterates content.fields.reserves and matches reserves[i].fields.coin_type.name
+ * @param coinType Coin type to read config for (default: "0x2::sui::SUI")
  * @returns Reserve configuration with fee_bps and available_amount
  */
-export async function readSuilendReserveConfig(coinType: string): Promise<SuilendReserveConfig> {
+export async function readSuilendReserveConfig(coinType: string = COIN_TYPES.SUI): Promise<SuilendReserveConfig> {
   try {
     const client = getSuiClient();
     const lendingMarket = await client.getObject({
       id: SUILEND.lendingMarket,
-      options: { showContent: true },
+      options: { showContent: true, showType: true },
     });
 
     if (!lendingMarket.data || !lendingMarket.data.content) {
@@ -36,29 +37,36 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
       throw new Error('Invalid lending market object type');
     }
 
-    // Search through reserves to find matching coin type
+    // Iterate reserves vector (inline Reserve structs in content.fields.reserves)
     const reserves = content.fields.reserves || [];
     for (let i = 0; i < reserves.length; i++) {
       const reserve = reserves[i];
-      const reserveCoinType = reserve.fields?.coin_type || reserve.coin_type;
+      
+      // Match reserves[i].fields.coin_type.name === coinType (verified via on-chain inspection)
+      const reserveCoinType = reserve.fields?.coin_type?.name || reserve.fields?.coin_type || reserve.coin_type;
       
       if (reserveCoinType === coinType) {
-        // Extract borrow_fee_bps from config
+        // Read from reserves[i].fields.config.fields.borrow_fee_bps (u64 bps)
         const config = reserve.fields?.config;
-        const borrowFeeBps = BigInt(config?.borrow_fee_bps || config?.fields?.borrow_fee_bps || '5'); // Default 5 bps = 0.05%
+        const borrowFeeBps = BigInt(
+          config?.fields?.borrow_fee_bps || 
+          config?.borrow_fee_bps || 
+          '5'
+        ); // Default 5 bps = 0.05%
         
-        // Extract available_amount
+        // Read from reserves[i].fields.available_amount (base units, 9 decimals for SUI)
         const availableAmount = BigInt(reserve.fields?.available_amount || '0');
         
-        logger.info(`Found Suilend reserve index ${i} for ${coinType}`);
-        logger.info(`  Borrow fee: ${borrowFeeBps} bps (${Number(borrowFeeBps) / 100}%)`);
-        
-        // Log in human units
+        // Log discovery with detailed info
         const isSui = coinType === COIN_TYPES.SUI;
         const humanAmount = isSui 
           ? smallestUnitToSui(availableAmount) 
           : smallestUnitToUsdc(availableAmount);
         const unit = isSui ? 'SUI' : 'USDC';
+        
+        logger.info(`✓ Found Suilend reserve for ${coinType}`);
+        logger.info(`  Reserve index: ${i}`);
+        logger.info(`  Borrow fee: ${borrowFeeBps} bps (${Number(borrowFeeBps) / 100}%)`);
         logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit}`);
         
         return {
@@ -157,33 +165,23 @@ export async function borrowFromSuilend(
     // Read reserve config if not provided
     const finalConfig = reserveConfig || await readSuilendReserveConfig(coinType);
 
-    // Check available amount with safety buffer
+    // Enforce capacity limit: principal <= available_amount - SAFETY_BUFFER
     const safetyBuffer = BigInt(config.suilendSafetyBuffer);
-    const maxBorrow = finalConfig.availableAmount - safetyBuffer;
+    assertBorrowWithinCap(amount, finalConfig.availableAmount, safetyBuffer, coinType);
     
     // Helper for unit conversion
     const isSui = coinType === COIN_TYPES.SUI;
     const unit = isSui ? 'SUI' : 'USDC';
     const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
     
-    if (amount > maxBorrow) {
-      const errorMsg = 
-        `Insufficient Suilend reserve capacity:\n` +
-        `  Requested: ${toHuman(amount).toFixed(2)} ${unit}\n` +
-        `  Available: ${toHuman(maxBorrow).toFixed(2)} ${unit} (after ${safetyBuffer} buffer)\n` +
-        `  Total reserve available: ${toHuman(finalConfig.availableAmount).toFixed(2)} ${unit}\n` +
-        `  Reserve index: ${finalConfig.reserveIndex}\n` +
-        `To fix: Reduce FLASHLOAN_AMOUNT or adjust SUILEND_SAFETY_BUFFER`;
-      
-      logger.error(errorMsg);
-      throw new Error(errorMsg);
-    }
-
-    logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${finalConfig.reserveIndex})`);
-    logger.info(`  Fee: ${finalConfig.borrowFeeBps} bps (${Number(finalConfig.borrowFeeBps) / 100}%)`);
+    // Compute repay with ceiling division: repay = principal + ceil(principal * fee_bps / 10_000)
+    const repayAmount = computeRepayAmountBase(amount, finalConfig.borrowFeeBps);
     
-    // Calculate and log repay amount
-    const repayAmount = calculateRepayAmountFromBps(amount, finalConfig.borrowFeeBps);
+    // Log detailed borrow info
+    logger.info(`Borrowing from Suilend`);
+    logger.info(`  Reserve index: ${finalConfig.reserveIndex}`);
+    logger.info(`  Fee: ${finalConfig.borrowFeeBps} bps (${Number(finalConfig.borrowFeeBps) / 100}%)`);
+    logger.info(`  Principal: ${toHuman(amount).toFixed(6)} ${unit}`);
     logger.info(`  Repay amount: ${toHuman(repayAmount).toFixed(6)} ${unit}`);
 
     // Suilend flashloan entrypoint per Perplexity spec:
@@ -398,18 +396,72 @@ export async function flashloanWithRetries(
 }
 
 /**
+ * Assert that borrow amount is within available capacity with safety buffer
+ * Enforces: principal <= available_amount - SAFETY_BUFFER
+ * @param principalBase Principal amount to borrow (base units)
+ * @param availableBase Available amount in reserve (base units)
+ * @param safetyBufferBase Safety buffer to reserve (base units)
+ * @param coinType Coin type for error messaging
+ * @throws Error if borrow exceeds capacity (in live mode); warns in DRY_RUN mode
+ */
+export function assertBorrowWithinCap(
+  principalBase: bigint,
+  availableBase: bigint,
+  safetyBufferBase: bigint,
+  coinType: string
+): void {
+  const maxBorrow = availableBase - safetyBufferBase;
+  
+  if (principalBase > maxBorrow) {
+    const isSui = coinType === COIN_TYPES.SUI;
+    const unit = isSui ? 'SUI' : 'USDC';
+    const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
+    
+    const errorMsg = 
+      `Insufficient Suilend reserve capacity:\n` +
+      `  Requested: ${toHuman(principalBase).toFixed(2)} ${unit}\n` +
+      `  Available: ${toHuman(maxBorrow).toFixed(2)} ${unit} (after ${safetyBufferBase} buffer)\n` +
+      `  Total reserve: ${toHuman(availableBase).toFixed(2)} ${unit}\n` +
+      `To fix: Reduce FLASHLOAN_AMOUNT or adjust SUILEND_SAFETY_BUFFER`;
+    
+    if (config.dryRun) {
+      // In DRY_RUN=true, WARN and continue for demonstrability
+      logger.warn('⚠️  Capacity check failed (simulation mode, continuing)');
+      logger.warn(errorMsg);
+    } else {
+      // In DRY_RUN=false (live), fail fast with clear error
+      logger.error(errorMsg);
+      throw new Error(errorMsg);
+    }
+  }
+}
+
+/**
+ * Compute flashloan repayment amount from fee in basis points
+ * Formula: repay = principal + ceil(principal * fee_bps / 10_000)
+ * Uses integer ceiling division in bigint arithmetic to ensure we repay enough
+ * @param principalBase Principal amount borrowed (base units)
+ * @param feeBps Fee in basis points (e.g., 5 for 0.05%)
+ * @returns Total amount to repay (principal + fee, rounded up)
+ */
+export function computeRepayAmountBase(principalBase: bigint, feeBps: bigint): bigint {
+  // Calculate fee with ceiling: fee = ceil(principal * feeBps / 10_000)
+  // Using formula: ceil(a/b) = (a + b - 1) / b
+  const denominator = BigInt(10000);
+  const fee = (principalBase * feeBps + denominator - BigInt(1)) / denominator;
+  return principalBase + fee;
+}
+
+/**
  * Calculate flashloan repayment amount from fee in basis points
+ * @deprecated Use computeRepayAmountBase instead for clarity
  * Uses ceiling division to ensure we repay enough
  * @param borrowAmount Amount borrowed
  * @param feeBps Fee in basis points (e.g., 5 for 0.05%)
  * @returns Total amount to repay (principal + fee, rounded up)
  */
 export function calculateRepayAmountFromBps(borrowAmount: bigint, feeBps: bigint): bigint {
-  // Calculate fee with ceiling: fee = ceil(principal * feeBps / 10_000)
-  // Using formula: ceil(a/b) = (a + b - 1) / b
-  const denominator = BigInt(10000);
-  const fee = (borrowAmount * feeBps + denominator - BigInt(1)) / denominator;
-  return borrowAmount + fee;
+  return computeRepayAmountBase(borrowAmount, feeBps);
 }
 
 /**
