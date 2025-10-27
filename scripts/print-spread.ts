@@ -1,8 +1,8 @@
-import { config } from '../src/config';
+import { config, smallestUnitToSui } from '../src/config';
 import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
 import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
 import { getCetusPriceByPool } from '../src/cetusIntegration';
-import { COIN_TYPES } from '../src/addresses';
+import { COIN_TYPES, CETUS } from '../src/addresses';
 
 /**
  * Calculate spread percentage between two prices
@@ -18,7 +18,8 @@ async function printSpread() {
   console.log('=== Sui Cetus Fee-Tier Spread Checker ===\n');
   console.log('Strategy: Cetus fee-tier arbitrage (0.05% vs 0.25%)');
   console.log('Flashloan asset: SUI');
-  console.log(`Expected USDC type: ${COIN_TYPES.BRIDGED_USDC}\n`);
+  console.log(`Expected USDC type: ${COIN_TYPES.BRIDGED_USDC}`);
+  console.log(`Selected GlobalConfig: ${CETUS.globalConfigId}\n`);
 
   try {
     // Initialize RPC client
@@ -73,7 +74,7 @@ async function printSpread() {
 
     if (isProfitable) {
       console.log('Estimated Arbitrage (at configured flashloan size):');
-      const flashloanAmount = config.flashloanAmount / 1e9; // Convert to SUI
+      const flashloanAmount = smallestUnitToSui(BigInt(config.flashloanAmount));
       const estimatedGross = (flashloanAmount * spread) / 100;
       const flashloanFee = flashloanAmount * (config.suilendFeePercent / 100);
       const swapFees = flashloanAmount * 0.003; // ~0.3% total swap fees (0.05% + 0.25%)
@@ -81,7 +82,7 @@ async function printSpread() {
 
       console.log(`  Flashloan Size: ${flashloanAmount.toFixed(2)} SUI`);
       console.log(`  Gross Profit: ${estimatedGross.toFixed(6)} SUI`);
-      console.log(`  Flashloan Fee (${config.suilendFeePercent}%): ${flashloanFee.toFixed(6)} SUI`);
+      console.log(`  Flashloan Fee (~${config.suilendFeePercent}%): ${flashloanFee.toFixed(6)} SUI`);
       console.log(`  Swap Fees: ${swapFees.toFixed(6)} SUI`);
       console.log(`  Net Profit: ${estimatedNet.toFixed(6)} SUI`);
       console.log();

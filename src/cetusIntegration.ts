@@ -18,13 +18,15 @@ export interface CetusPoolMetadata {
   coinTypeB: string;
 }
 
-// Price and quote cache (commented out - reserved for future use)
-/*
-interface PriceCache {
-  price: number;
+// Pool state cache structure
+interface PoolStateCache {
+  currentSqrtPrice: string;
+  liquidity: string;
+  feeRate: number;
+  coinTypeA: string;
+  coinTypeB: string;
   timestamp: number;
 }
-*/
 
 interface QuoteResult {
   amountOut: bigint;
@@ -32,16 +34,75 @@ interface QuoteResult {
   priceImpact: number;
 }
 
-// Cache variables (reserved for future use)
-// let priceCache: PriceCache | null = null;
+// Cache variables
+const poolStateCache: Map<string, PoolStateCache> = new Map();
 const quoteCache: Map<string, { quote: QuoteResult; timestamp: number }> = new Map();
 
 /**
- * Check if cache is still valid (reserved for future use)
+ * Check if pool state cache is still valid
  */
-// function isCacheValid(timestamp: number): boolean {
-//   return Date.now() - timestamp < config.priceCacheTtlMs;
-// }
+function isPoolStateCacheValid(timestamp: number): boolean {
+  return Date.now() - timestamp < config.poolStateCacheTtlMs;
+}
+
+/**
+ * Get cached pool state or fetch from RPC
+ */
+async function getPoolState(poolId: string): Promise<PoolStateCache> {
+  // Check cache first
+  const cached = poolStateCache.get(poolId);
+  if (cached && isPoolStateCacheValid(cached.timestamp)) {
+    logger.debug(`Using cached pool state for ${poolId.slice(0, 8)}...`);
+    return cached;
+  }
+
+  // Fetch from RPC
+  logger.debug(`Fetching pool state from RPC for ${poolId.slice(0, 8)}...`);
+  const client = getSuiClient();
+  const poolObject = await client.getObject({
+    id: poolId,
+    options: { showContent: true, showType: true },
+  });
+
+  if (!poolObject.data || !poolObject.data.content) {
+    throw new Error(`Pool not found: ${poolId}`);
+  }
+
+  const content = poolObject.data.content as any;
+  if (content.dataType !== 'moveObject') {
+    throw new Error(`Invalid pool object type for ${poolId}`);
+  }
+
+  const fields = content.fields;
+  
+  // Extract type arguments from pool type
+  const poolType = poolObject.data.type;
+  if (!poolType) {
+    throw new Error(`Pool type not found for ${poolId}`);
+  }
+
+  const typeMatch = poolType.match(/Pool<([^,]+),\s*([^>]+)>/);
+  if (!typeMatch) {
+    throw new Error(`Cannot parse pool type: ${poolType}`);
+  }
+
+  const [, coinTypeA, coinTypeB] = typeMatch;
+
+  // Create cache entry
+  const state: PoolStateCache = {
+    currentSqrtPrice: fields.current_sqrt_price?.toString() || fields.sqrt_price?.toString() || '0',
+    liquidity: fields.liquidity?.toString() || '0',
+    feeRate: Number(fields.fee_rate || fields.fee || 0),
+    coinTypeA,
+    coinTypeB,
+    timestamp: Date.now(),
+  };
+
+  // Cache it
+  poolStateCache.set(poolId, state);
+  
+  return state;
+}
 
 /**
  * Get current SUI/USDC price from Cetus using SDK (DEPRECATED)
@@ -115,7 +176,7 @@ export function buildCetusSwap(
  * Clear caches
  */
 export function clearCetusCache(): void {
-  // priceCache = null; // Commented out - cache not currently used
+  poolStateCache.clear();
   quoteCache.clear();
   logger.debug('Cetus cache cleared');
 }
@@ -157,30 +218,12 @@ export async function getCetusPriceByPool(poolMeta: {
   coinTypeB: string;
 }): Promise<number> {
   try {
-    const client = getSuiClient();
-
-    // Fetch pool object
-    const poolObject = await client.getObject({
-      id: poolMeta.poolId,
-      options: {
-        showContent: true,
-      },
-    });
-
-    if (!poolObject.data || !poolObject.data.content) {
-      throw new Error('Cetus pool data not found');
-    }
-
-    const content = poolObject.data.content as any;
-    if (content.dataType !== 'moveObject') {
-      throw new Error('Invalid pool object type');
-    }
-
-    const fields = content.fields;
+    // Use cached pool state
+    const poolState = await getPoolState(poolMeta.poolId);
 
     // Extract sqrt_price from pool state
-    const sqrtPriceStr = fields.current_sqrt_price || fields.sqrt_price;
-    if (!sqrtPriceStr) {
+    const sqrtPriceStr = poolState.currentSqrtPrice;
+    if (!sqrtPriceStr || sqrtPriceStr === '0') {
       throw new Error('sqrtPrice not found in pool state');
     }
 
@@ -226,7 +269,6 @@ export async function quoteCetusPoolSwapB2A(
   feePercent: number
 ): Promise<QuoteResult> {
   try {
-    const client = getSuiClient();
 
     // Get current price from this specific pool
     const price = await getCetusPriceByPool(poolMeta);
@@ -252,16 +294,9 @@ export async function quoteCetusPoolSwapB2A(
       throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
     }
 
-    // Calculate sqrt_price_limit (1% slippage from current)
-    const poolObject = await client.getObject({
-      id: poolMeta.poolId,
-      options: { showContent: true },
-    });
-
-    const content = poolObject.data?.content as any;
-    const currentSqrtPrice = new Decimal(
-      content.fields.current_sqrt_price || content.fields.sqrt_price
-    );
+    // Use cached pool state for sqrt_price_limit
+    const poolState = await getPoolState(poolMeta.poolId);
+    const currentSqrtPrice = new Decimal(poolState.currentSqrtPrice);
 
     // Determine direction based on coin ordering
     const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
@@ -299,7 +334,6 @@ export async function quoteCetusPoolSwapA2B(
   feePercent: number
 ): Promise<QuoteResult> {
   try {
-    const client = getSuiClient();
 
     // Get current price from this specific pool
     const price = await getCetusPriceByPool(poolMeta);
@@ -325,16 +359,9 @@ export async function quoteCetusPoolSwapA2B(
       throw new Error(`Invalid quote output: ${amountOutAfterFee.toString()}`);
     }
 
-    // Calculate sqrt_price_limit (1% slippage from current)
-    const poolObject = await client.getObject({
-      id: poolMeta.poolId,
-      options: { showContent: true },
-    });
-
-    const content = poolObject.data?.content as any;
-    const currentSqrtPrice = new Decimal(
-      content.fields.current_sqrt_price || content.fields.sqrt_price
-    );
+    // Use cached pool state for sqrt_price_limit
+    const poolState = await getPoolState(poolMeta.poolId);
+    const currentSqrtPrice = new Decimal(poolState.currentSqrtPrice);
 
     // Determine direction based on coin ordering
     const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;

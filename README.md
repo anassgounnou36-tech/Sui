@@ -135,6 +135,17 @@ LIVE_CONFIRM=false              # MUST be true for amounts >100k USDC
 MAX_CONSECUTIVE_FAILURES=3      # Kill switch threshold
 CONSECUTIVE_SPREAD_REQUIRED=2   # Confirmations before execution
 
+# Minimum Trade Size
+MIN_TRADE_SUI=1.0               # Minimum 1 SUI for live mode (avoid rounding)
+                                # Simulation allows smaller with warnings
+
+# Suilend Settings
+SUILEND_SAFETY_BUFFER=0         # Reserve capacity buffer (base units)
+
+# RPC Rotation and Caching
+ROTATE_AFTER_REQUESTS=20        # Rotate RPC after N requests (round-robin)
+POOL_STATE_CACHE_TTL_MS=5000    # Cache pool state for 5s (reduce RPC load)
+
 # Monitoring
 CHECK_INTERVAL_MS=5000          # Price check interval
 FINALITY_POLL_INTERVAL_MS=500   # TX finality check interval
@@ -157,9 +168,17 @@ The bot uses these mainnet addresses by default (can be overridden via env vars)
   - ⚠️ **WARNING**: Using Wormhole wrapped USDC requires setting `ALLOW_WRAPPED_USDC=true`. Native USDC is strongly recommended for arbitrage.
 - **SUI**: `0x2::sui::SUI` (9 decimals)
 - **Cetus CLMM**: `0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb`
+  - **CLMM GlobalConfig** (for direct pool::swap calls): `0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f` (default)
+    - This bot uses direct `pool::swap` calls for maximum efficiency
+  - **Integration GlobalConfig** (for integration/router): `0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3`
+    - Use if calling via Cetus integration wrapper functions (not used by default)
+  - Override via `CETUS_GLOBAL_CONFIG_ID` if needed
 - **Turbos CLMM**: `0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1`
 - **Suilend**: `0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85`
   - Lending Market: `0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`
+  - **Dynamic Fee Reading**: Bot reads `borrow_fee_bps` and `available_amount` at runtime from reserve config
+    - On error: Falls back to 5 bps (0.05%) fee and large default available amount
+    - Logs warnings if dynamic reading fails
 - **Navi**: `0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42`
 
 **Pool Discovery**: Pool IDs are resolved dynamically at startup. The resolver:

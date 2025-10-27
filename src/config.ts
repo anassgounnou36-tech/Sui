@@ -58,6 +58,8 @@ export const config = {
   flashloanAsset: getEnvString('FLASHLOAN_ASSET', 'SUI') as FlashloanAsset,
   flashloanAmount: getEnvNumber('FLASHLOAN_AMOUNT', 10_000_000_000), // 10 SUI (9 decimals)
   maxFlashloanUsdc: getEnvNumber('MAX_FLASHLOAN_USDC', 5_000_000), // 5M USDC max
+  minTradeSui: getEnvNumber('MIN_TRADE_SUI', 1.0), // Minimum 1 SUI for live mode
+  suilendSafetyBuffer: getEnvNumber('SUILEND_SAFETY_BUFFER', 0), // Safety buffer for available_amount
 
   // Safety confirmation for large amounts
   liveConfirm: getEnvBoolean('LIVE_CONFIRM', false),
@@ -99,6 +101,10 @@ export const config = {
 
   // Cache configuration
   priceCacheTtlMs: getEnvNumber('PRICE_CACHE_TTL_MS', 2_000),
+  poolStateCacheTtlMs: getEnvNumber('POOL_STATE_CACHE_TTL_MS', 5_000), // 5s cache for pool state
+
+  // RPC rotation configuration
+  rotateAfterRequests: getEnvNumber('ROTATE_AFTER_REQUESTS', 20), // Rotate RPC after N requests
 
   // Retry configuration
   maxRetries: getEnvNumber('MAX_RETRIES', 3),
@@ -151,6 +157,18 @@ export function validateConfig(): void {
   const minAmount = config.flashloanAsset === 'SUI' ? 1_000_000_000 : 1_000_000; // 1 SUI or 1 USDC
   if (config.flashloanAmount < minAmount) {
     console.warn(`Warning: FLASHLOAN_AMOUNT is very low (<1 ${config.flashloanAsset})`);
+  }
+
+  // Enforce minimum trade size for live mode
+  if (!config.dryRun && config.flashloanAsset === 'SUI') {
+    const flashloanSuiAmount = config.flashloanAmount / 1_000_000_000; // Convert to SUI
+    if (flashloanSuiAmount < config.minTradeSui) {
+      throw new Error(
+        `Live mode requires FLASHLOAN_AMOUNT >= ${config.minTradeSui} SUI to avoid rounding issues. ` +
+          `Current: ${flashloanSuiAmount.toFixed(2)} SUI. ` +
+          `Set MIN_TRADE_SUI to a lower value if needed, or increase FLASHLOAN_AMOUNT.`
+      );
+    }
   }
 
   // Safety check for large flashloan amounts

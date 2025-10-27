@@ -1,9 +1,10 @@
-import { config } from '../src/config';
+import { config, smallestUnitToSui, smallestUnitToUsdc } from '../src/config';
 import { initializeRpcClient } from '../src/utils/sui';
 import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
 import { quoteCetusPoolSwapB2A, quoteCetusPoolSwapA2B } from '../src/cetusIntegration';
 import { SUILEND, CETUS, COIN_TYPES } from '../src/addresses';
 import { calculateMinOut } from '../src/slippage';
+import { readSuilendReserveConfig, calculateRepayAmountFromBps } from '../src/flashloan';
 
 /**
  * Simulate the complete arbitrage PTB for Cetus fee-tier arbitrage
@@ -12,7 +13,8 @@ async function simulateArbitrage() {
   console.log('=== Sui Cetus Fee-Tier Arbitrage Simulator ===\n');
   console.log('Strategy: Cetus fee-tier arbitrage (0.05% vs 0.25%)');
   console.log('Flashloan asset: SUI');
-  console.log(`Expected USDC type: ${COIN_TYPES.BRIDGED_USDC}\n`);
+  console.log(`Expected USDC type: ${COIN_TYPES.BRIDGED_USDC}`);
+  console.log(`Selected GlobalConfig: ${CETUS.globalConfigId}\n`);
 
   try {
     // Initialize
@@ -31,7 +33,21 @@ async function simulateArbitrage() {
 
     // Get flashloan amount from config (SUI)
     const flashloanAmount = BigInt(config.flashloanAmount);
-    console.log(`Flashloan Amount: ${flashloanAmount} (${Number(flashloanAmount) / 1e9} SUI)\n`);
+    const flashloanSui = smallestUnitToSui(flashloanAmount);
+    console.log(`Flashloan Amount: ${flashloanSui.toFixed(2)} SUI\n`);
+
+    // Check minimum trade size for simulation
+    if (flashloanSui < 0.1) {
+      console.warn(
+        `⚠️  WARNING: Flashloan amount (${flashloanSui.toFixed(2)} SUI) is very small. ` +
+        `Recommend >= 0.1 SUI for accurate simulation, >= 1 SUI for live trading.\n`
+      );
+    }
+
+    // Read Suilend reserve config for dynamic fee
+    console.log('Reading Suilend reserve configuration...');
+    const reserveConfig = await readSuilendReserveConfig(COIN_TYPES.SUI);
+    console.log();
 
     // Get quotes from both Cetus pools
     console.log('Fetching quotes...');
@@ -42,8 +58,8 @@ async function simulateArbitrage() {
 
     console.log('\n=== Quote Results ===');
     console.log('SUI -> USDC (sell with flashloan):');
-    console.log(`  0.05% pool: ${quote005B2A.amountOut} USDC, limit: ${quote005B2A.sqrtPriceLimit}`);
-    console.log(`  0.25% pool: ${quote025B2A.amountOut} USDC, limit: ${quote025B2A.sqrtPriceLimit}`);
+    console.log(`  0.05% pool: ${smallestUnitToUsdc(quote005B2A.amountOut).toFixed(6)} USDC`);
+    console.log(`  0.25% pool: ${smallestUnitToUsdc(quote025B2A.amountOut).toFixed(6)} USDC`);
     console.log();
 
     // Determine direction (sell on higher USDC output pool, buy back on other)
@@ -52,7 +68,7 @@ async function simulateArbitrage() {
     const firstSwapOut = sellOn005 ? quote005B2A.amountOut : quote025B2A.amountOut;
 
     console.log(`Direction: ${direction}`);
-    console.log(`First swap output: ${firstSwapOut} USDC\n`);
+    console.log(`First swap output: ${smallestUnitToUsdc(firstSwapOut).toFixed(6)} USDC\n`);
 
     // Get quote for second swap (USDC -> SUI to repay flashloan)
     const secondSwapQuote = sellOn005
@@ -60,33 +76,32 @@ async function simulateArbitrage() {
       : await quoteCetusPoolSwapA2B(pools.pool005, firstSwapOut, 0.05);
 
     console.log('USDC -> SUI (buy back):');
-    console.log(`  Expected: ${secondSwapQuote.amountOut} SUI`);
-    console.log(`  Limit: ${secondSwapQuote.sqrtPriceLimit}\n`);
+    console.log(`  Expected: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI\n`);
 
-    // Calculate repay amount (flashloan + fee for SUI)
-    const suilendFee = (flashloanAmount * BigInt(Math.floor(config.suilendFeePercent * 100))) / BigInt(10000);
-    const repayAmount = flashloanAmount + suilendFee;
+    // Calculate repay amount using dynamic fee
+    const repayAmount = calculateRepayAmountFromBps(flashloanAmount, reserveConfig.borrowFeeBps);
+    const fee = repayAmount - flashloanAmount;
 
     console.log('=== Fee Calculations ===');
-    console.log(`Flashloan Fee (${config.suilendFeePercent}%): ${suilendFee} (${Number(suilendFee) / 1e9} SUI)`);
-    console.log(`Repay Amount: ${repayAmount} (${Number(repayAmount) / 1e9} SUI)\n`);
+    console.log(`Flashloan Fee (${reserveConfig.borrowFeeBps} bps / ${Number(reserveConfig.borrowFeeBps) / 100}%): ${smallestUnitToSui(fee).toFixed(6)} SUI`);
+    console.log(`Repay Amount: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI\n`);
 
     // Calculate min_out for both swaps
     const firstSwapMinOut = calculateMinOut(firstSwapOut, config.maxSlippagePercent);
     const secondSwapMinOut = repayAmount; // Must cover repay exactly
 
     console.log('=== Slippage Protection ===');
-    console.log(`First swap amount_limit (min_out): ${firstSwapMinOut} USDC (${config.maxSlippagePercent}% slippage)`);
-    console.log(`Second swap amount_limit (min_out): ${secondSwapMinOut} SUI (must cover repay)\n`);
+    console.log(`First swap amount_limit (min_out): ${smallestUnitToUsdc(firstSwapMinOut).toFixed(6)} USDC (${config.maxSlippagePercent}% slippage)`);
+    console.log(`Second swap amount_limit (min_out): ${smallestUnitToSui(secondSwapMinOut).toFixed(6)} SUI (must cover repay)\n`);
 
     // Check profitability
     const estimatedProfit = secondSwapQuote.amountOut - repayAmount;
     const isProfitable = estimatedProfit > BigInt(0);
 
     console.log('=== Profitability Check ===');
-    console.log(`Expected Output: ${secondSwapQuote.amountOut} SUI`);
-    console.log(`Repay Amount: ${repayAmount} SUI`);
-    console.log(`Estimated Profit: ${estimatedProfit} (${Number(estimatedProfit) / 1e9} SUI)`);
+    console.log(`Expected Output: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI`);
+    console.log(`Repay Amount: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI`);
+    console.log(`Estimated Profit: ${smallestUnitToSui(estimatedProfit).toFixed(6)} SUI`);
     console.log(`Status: ${isProfitable ? '✓ PROFITABLE' : '✗ NOT PROFITABLE'}\n`);
 
     if (!isProfitable) {
@@ -98,40 +113,39 @@ async function simulateArbitrage() {
 
     console.log('Step 1: Borrow SUI from Suilend flashloan');
     console.log(`  Package: ${SUILEND.packageId}`);
-    console.log(`  Market: 0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`);
-    console.log(`  Amount: ${flashloanAmount} SUI`);
+    console.log(`  Market: ${SUILEND.lendingMarket}`);
+    console.log(`  Amount: ${smallestUnitToSui(flashloanAmount).toFixed(6)} SUI`);
     console.log();
 
     console.log(`Step 2: Swap SUI -> USDC on Cetus ${sellOn005 ? '0.05%' : '0.25%'} pool`);
     console.log(`  Package: ${CETUS.packageId}`);
     console.log(`  Pool: ${sellOn005 ? pools.pool005.poolId : pools.pool025.poolId}`);
-    console.log(`  Amount In: ${flashloanAmount} SUI`);
-    console.log(`  Amount Limit (min_out): ${firstSwapMinOut} USDC`);
-    console.log(`  Sqrt Price Limit: ${sellOn005 ? quote005B2A.sqrtPriceLimit : quote025B2A.sqrtPriceLimit}`);
+    console.log(`  Amount In: ${smallestUnitToSui(flashloanAmount).toFixed(6)} SUI`);
+    console.log(`  Amount Limit (min_out): ${smallestUnitToUsdc(firstSwapMinOut).toFixed(6)} USDC`);
     console.log();
 
     console.log(`Step 3: Swap USDC -> SUI on Cetus ${sellOn005 ? '0.25%' : '0.05%'} pool`);
     console.log(`  Package: ${CETUS.packageId}`);
     console.log(`  Pool: ${sellOn005 ? pools.pool025.poolId : pools.pool005.poolId}`);
-    console.log(`  Amount In: ${firstSwapOut} USDC`);
-    console.log(`  Amount Limit (min_out): ${secondSwapMinOut} SUI`);
-    console.log(`  Sqrt Price Limit: ${secondSwapQuote.sqrtPriceLimit}`);
+    console.log(`  Amount In: ${smallestUnitToUsdc(firstSwapOut).toFixed(6)} USDC`);
+    console.log(`  Amount Limit (min_out): ${smallestUnitToSui(secondSwapMinOut).toFixed(6)} SUI`);
     console.log();
 
     console.log('Step 4: Split coins for repayment');
-    console.log(`  Repay Coins: ${repayAmount} SUI`);
-    console.log(`  Profit Coins: ${estimatedProfit > 0 ? estimatedProfit : 0} SUI`);
+    console.log(`  Repay Coins: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI`);
+    console.log(`  Profit Coins: ${smallestUnitToSui(estimatedProfit > 0 ? estimatedProfit : BigInt(0)).toFixed(6)} SUI`);
     console.log();
 
     console.log('Step 5: Repay Suilend flashloan');
+    console.log('Step 5: Repay Suilend flashloan');
     console.log(`  Package: ${SUILEND.packageId}`);
-    console.log(`  Market: 0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`);
-    console.log(`  Amount: ${repayAmount} SUI`);
+    console.log(`  Market: ${SUILEND.lendingMarket}`);
+    console.log(`  Amount: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI`);
     console.log();
 
     console.log('Step 6: Transfer profit to wallet');
     console.log(`  Recipient: ${config.walletAddress}`);
-    console.log(`  Amount: ${estimatedProfit > 0 ? estimatedProfit : 0} SUI`);
+    console.log(`  Amount: ${smallestUnitToSui(estimatedProfit > 0 ? estimatedProfit : BigInt(0)).toFixed(6)} SUI`);
     console.log();
 
     console.log('=== PTB Structure Summary ===');
