@@ -125,8 +125,15 @@ async function feeTierMonitoringLoop() {
 
     logger.info(`Potential fee-tier arbitrage direction: ${direction}`);
 
-    // Notify about opportunity when spread is detected
-    if (consecutiveSpreadCount === 0) {
+    // Check for consecutive spread confirmation
+    if (lastSpreadDirection === direction) {
+      consecutiveSpreadCount++;
+      logger.info(`Consecutive spread count: ${consecutiveSpreadCount}`);
+    } else {
+      // Direction changed or first detection - notify about new opportunity
+      consecutiveSpreadCount = 1;
+      lastSpreadDirection = direction;
+      
       await telegramNotifier.notifyOpportunity(
         price005,
         price025,
@@ -135,15 +142,6 @@ async function feeTierMonitoringLoop() {
         pools.pool005.poolId,
         pools.pool025.poolId
       );
-    }
-
-    // Check for consecutive spread confirmation
-    if (lastSpreadDirection === direction) {
-      consecutiveSpreadCount++;
-      logger.info(`Consecutive spread count: ${consecutiveSpreadCount}`);
-    } else {
-      consecutiveSpreadCount = 1;
-      lastSpreadDirection = direction;
     }
 
     // Require 2 consecutive ticks with same direction
