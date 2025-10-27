@@ -134,14 +134,18 @@ async function feeTierMonitoringLoop() {
       consecutiveSpreadCount = 1;
       lastSpreadDirection = direction;
       
-      await telegramNotifier.notifyOpportunity(
-        price005,
-        price025,
-        spread,
-        direction,
-        pools.pool005.poolId,
-        pools.pool025.poolId
-      );
+      try {
+        await telegramNotifier.notifyOpportunity(
+          price005,
+          price025,
+          spread,
+          direction,
+          pools.pool005.poolId,
+          pools.pool025.poolId
+        );
+      } catch (error) {
+        logger.error('Failed to send opportunity notification', error);
+      }
     }
 
     // Require 2 consecutive ticks with same direction
@@ -171,7 +175,11 @@ async function feeTierMonitoringLoop() {
       minProfit,
       // Notification callback: called after validation passes, before PTB building
       async (dir, amount, minProf, expectedProfit, isDryRun) => {
-        await telegramNotifier.notifyExecutionStart(dir, amount, minProf, expectedProfit, isDryRun);
+        try {
+          await telegramNotifier.notifyExecutionStart(dir, amount, minProf, expectedProfit, isDryRun);
+        } catch (error) {
+          logger.error('Failed to send execution start notification', error);
+        }
       }
     );
 
@@ -206,14 +214,18 @@ async function feeTierMonitoringLoop() {
       });
 
       // Notify execution result
-      await telegramNotifier.notifyExecutionResult(
-        direction,
-        true,
-        result.profit,
-        result.txDigest,
-        undefined,
-        config.dryRun
-      );
+      try {
+        await telegramNotifier.notifyExecutionResult(
+          direction,
+          true,
+          result.profit,
+          result.txDigest,
+          undefined,
+          config.dryRun
+        );
+      } catch (error) {
+        logger.error('Failed to send execution result notification', error);
+      }
 
       // Reset consecutive count after successful execution
       consecutiveSpreadCount = 0;
@@ -235,13 +247,17 @@ async function feeTierMonitoringLoop() {
       });
 
       // Notify execution result
-      await telegramNotifier.notifyExecutionResult(
-        direction,
-        false,
-        undefined,
-        undefined,
-        result.error
-      );
+      try {
+        await telegramNotifier.notifyExecutionResult(
+          direction,
+          false,
+          undefined,
+          undefined,
+          result.error
+        );
+      } catch (error) {
+        logger.error('Failed to send execution result notification', error);
+      }
 
       // Kill switch: Stop if too many consecutive failures
       if (consecutiveFailures >= config.maxConsecutiveFailures) {
