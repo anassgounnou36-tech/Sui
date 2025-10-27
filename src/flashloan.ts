@@ -16,14 +16,22 @@ export interface SuilendReserveConfig {
 
 /**
  * Read Suilend reserve configuration including fee and available borrow amount
- * @param coinType Coin type to read config for
- * @returns Reserve configuration with fee_bps and available_amount
+ * Reserves are stored in a 0x2::bag::Bag as dynamic fields (not a vector).
+ * 
+ * @param marketId Market object ID (defaults to SUILEND.lendingMarket)
+ * @param targetCoinType Coin type to read config for (defaults to 0x2::sui::SUI)
+ * @returns Reserve configuration with reserveKey (field.name.value), feeBps, availableAmount
  */
-export async function readSuilendReserveConfig(coinType: string): Promise<SuilendReserveConfig> {
+export async function readSuilendReserveConfig(
+  targetCoinType: string = COIN_TYPES.SUI,
+  marketId: string = SUILEND.lendingMarket
+): Promise<SuilendReserveConfig> {
   try {
     const client = getSuiClient();
+    
+    // Fetch the lending market object
     const lendingMarket = await client.getObject({
-      id: SUILEND.lendingMarket,
+      id: marketId,
       options: { showContent: true },
     });
 
@@ -36,25 +44,88 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
       throw new Error('Invalid lending market object type');
     }
 
-    // Search through reserves to find matching coin type
-    const reserves = content.fields.reserves || [];
-    for (let i = 0; i < reserves.length; i++) {
-      const reserve = reserves[i];
-      const reserveCoinType = reserve.fields?.coin_type || reserve.coin_type;
+    // Extract bagId from reserves Bag
+    // Per Perplexity: reserves is a 0x2::bag::Bag stored at content.fields.reserves.fields.id.id
+    const reservesBag = content.fields?.reserves;
+    if (!reservesBag || !reservesBag.fields || !reservesBag.fields.id || !reservesBag.fields.id.id) {
+      throw new Error('Cannot extract bagId from lending market reserves field');
+    }
+    
+    const bagId = reservesBag.fields.id.id;
+    logger.debug(`Reserves bagId: ${bagId}`);
+
+    // Enumerate dynamic fields with pagination
+    let allDynamicFields: any[] = [];
+    let hasNextPage = true;
+    let cursor: string | null = null;
+
+    while (hasNextPage) {
+      const dynamicFieldsPage = await client.getDynamicFields({
+        parentId: bagId,
+        cursor: cursor || undefined,
+      });
+
+      allDynamicFields = allDynamicFields.concat(dynamicFieldsPage.data);
+      hasNextPage = dynamicFieldsPage.hasNextPage;
+      cursor = dynamicFieldsPage.nextCursor || null;
+
+      logger.debug(`Fetched ${dynamicFieldsPage.data.length} dynamic fields (hasNextPage: ${hasNextPage})`);
+    }
+
+    logger.info(`Found ${allDynamicFields.length} reserves in Suilend lending market bag`);
+
+    // Log the first dynamic field structure at DEBUG level for troubleshooting
+    if (allDynamicFields.length > 0) {
+      logger.debug(`First dynamic field structure: ${JSON.stringify(allDynamicFields[0], null, 2)}`);
+    }
+
+    // Iterate through dynamic fields to find matching coin type
+    for (let i = 0; i < allDynamicFields.length; i++) {
+      const field = allDynamicFields[i];
       
-      if (reserveCoinType === coinType) {
-        // Extract borrow_fee_bps from config
-        const config = reserve.fields?.config;
-        const borrowFeeBps = BigInt(config?.borrow_fee_bps || config?.fields?.borrow_fee_bps || '5'); // Default 5 bps = 0.05%
+      // Fetch the dynamic field object
+      const fieldObject = await client.getDynamicFieldObject({
+        parentId: bagId,
+        name: {
+          type: field.name.type,
+          value: field.name.value,
+        },
+      });
+
+      if (!fieldObject.data || !fieldObject.data.content) {
+        logger.debug(`Skipping field ${i}: no content`);
+        continue;
+      }
+
+      const fieldContent = fieldObject.data.content as any;
+      if (fieldContent.dataType !== 'moveObject') {
+        logger.debug(`Skipping field ${i}: not a moveObject`);
+        continue;
+      }
+
+      // Extract reserve data
+      const reserveFields = fieldContent.fields;
+      const reserveCoinType = reserveFields?.coin_type;
+
+      // Check if this is our target coin type
+      if (reserveCoinType === targetCoinType) {
+        // Extract borrow_fee from config (NOT borrow_fee_bps)
+        // Per Perplexity: fee field is config.borrow_fee (bps), not borrow_fee_bps
+        const configFields = reserveFields?.config?.fields || reserveFields?.config;
+        const borrowFeeBps = BigInt(configFields?.borrow_fee || '5'); // Default 5 bps = 0.05%
         
-        // Extract available_amount
-        const availableAmount = BigInt(reserve.fields?.available_amount || '0');
+        // Extract available_amount (base units, e.g., 9 decimals for SUI)
+        const availableAmount = BigInt(reserveFields?.available_amount || '0');
         
-        logger.info(`Found Suilend reserve index ${i} for ${coinType}`);
+        // Reserve key is the field name value
+        const reserveKey = field.name.value;
+
+        logger.info(`Found Suilend reserve for ${targetCoinType}`);
+        logger.info(`  Reserve key: ${reserveKey}`);
         logger.info(`  Borrow fee: ${borrowFeeBps} bps (${Number(borrowFeeBps) / 100}%)`);
         
         // Log in human units
-        const isSui = coinType === COIN_TYPES.SUI;
+        const isSui = targetCoinType === COIN_TYPES.SUI;
         const humanAmount = isSui 
           ? smallestUnitToSui(availableAmount) 
           : smallestUnitToUsdc(availableAmount);
@@ -62,16 +133,16 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
         logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit}`);
         
         return {
-          reserveIndex: i,
+          reserveIndex: Number(reserveKey), // Use reserveKey as index
           borrowFeeBps,
           availableAmount,
-          coinType,
+          coinType: targetCoinType,
         };
       }
     }
 
     // If not found, handle based on mode
-    const errorMsg = `Could not find reserve for coin type ${coinType} in Suilend lending market.`;
+    const errorMsg = `Could not find reserve for coin type ${targetCoinType} in Suilend lending market.`;
     
     if (config.dryRun) {
       // In simulation/dry-run mode, allow fallback with clear warning
@@ -84,7 +155,7 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
         reserveIndex: 0,
         borrowFeeBps: BigInt(5), // 0.05%
         availableAmount: BigInt('1000000000000000'), // Large default for simulation
-        coinType,
+        coinType: targetCoinType,
       };
     } else {
       // In live mode, fail explicitly with guidance
@@ -93,7 +164,7 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
       logger.error('Please verify:');
       logger.error('  1. SUILEND_LENDING_MARKET is set correctly in .env');
       logger.error('  2. The lending market contains a reserve for the coin type');
-      logger.error(`  3. Coin type matches exactly: ${coinType}`);
+      logger.error(`  3. Coin type matches exactly: ${targetCoinType}`);
       throw new Error(
         `${errorMsg} Cannot proceed in live mode. ` +
         `Verify SUILEND_LENDING_MARKET and reserve configuration.`
@@ -113,7 +184,7 @@ export async function readSuilendReserveConfig(coinType: string): Promise<Suilen
         reserveIndex: 0,
         borrowFeeBps: BigInt(5), // 0.05%
         availableAmount: BigInt('1000000000000000'), // Large default for simulation
-        coinType,
+        coinType: targetCoinType,
       };
     } else {
       // In live mode, fail with clear guidance
