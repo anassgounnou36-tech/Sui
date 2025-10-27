@@ -167,18 +167,15 @@ async function feeTierMonitoringLoop() {
     lastExecutionTime = Date.now();
     totalExecutions++;
 
-    const result = await executeFlashloanArb(direction, flashloanAmount, minProfit);
-
-    // Notify execution start if we have expected profit
-    if (result.expectedProfit) {
-      await telegramNotifier.notifyExecutionStart(
-        direction,
-        flashloanAmount,
-        minProfit,
-        result.expectedProfit,
-        config.dryRun
-      );
-    }
+    const result = await executeFlashloanArb(
+      direction,
+      flashloanAmount,
+      minProfit,
+      // Notification callback: called after validation passes, before PTB building
+      async (dir, amount, minProf, expectedProfit, isDryRun) => {
+        await telegramNotifier.notifyExecutionStart(dir, amount, minProf, expectedProfit, isDryRun);
+      }
+    );
 
     pendingTransactions--;
 
