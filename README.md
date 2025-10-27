@@ -200,8 +200,11 @@ The bot uses these mainnet addresses by default (can be overridden via env vars)
 - **Turbos CLMM**: `0x91bfbc386a41afcfd9b2533058d7e915a1d3829089cc268ff4333d54d6339ca1`
 - **Suilend**: `0x902f7ee4a68f6f63b05acd66e7aacc6de72703da4d8e0c6f94c1dd4b73c62e85`
   - Lending Market: `0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`
-  - **Dynamic Fee Reading**: Bot reads `borrow_fee_bps` and `available_amount` at runtime from reserve config
-    - On error: Falls back to 5 bps (0.05%) fee and large default available amount
+  - **Dynamic Reserve Discovery**: Reserves are stored as dynamic fields in a `0x2::bag::Bag`
+    - Bot enumerates reserves via `getDynamicFields` with pagination support
+    - Reads `config.borrow_fee` (bps) from each reserve (not `borrow_fee_bps`)
+    - Reads `available_amount` in base units (9 decimals for SUI, 6 for USDC = MIST)
+    - On error: Falls back to 5 bps (0.05%) fee and large default available amount in DRY_RUN mode
     - Logs warnings if dynamic reading fails
 - **Navi**: `0x06d8af64fe58327e9f2b7b33b9fad9a5d0f0fb1ba38b024de09c767c10241e42`
 
