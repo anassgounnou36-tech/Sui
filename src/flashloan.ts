@@ -135,11 +135,13 @@ export async function readSuilendReserveConfig(
         // Convert reserveKey to number (should be numeric for Suilend reserves)
         const reserveIndexNum = Number(reserveKey);
         if (isNaN(reserveIndexNum)) {
-          logger.warn(`Reserve key '${reserveKey}' is not numeric, using as-is (may cause issues)`);
+          const errorMsg = `Reserve key '${reserveKey}' is not numeric. Cannot use as reserve index.`;
+          logger.error(errorMsg);
+          throw new Error(errorMsg);
         }
         
         return {
-          reserveIndex: isNaN(reserveIndexNum) ? 0 : reserveIndexNum, // Fallback to 0 if not numeric
+          reserveIndex: reserveIndexNum,
           borrowFeeBps,
           availableAmount,
           coinType: targetCoinType,
