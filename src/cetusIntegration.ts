@@ -7,7 +7,8 @@ import { getSuiClient } from './utils/sui';
 import { logger } from './logger';
 import { CETUS, COIN_TYPES } from './addresses';
 import { config } from './config';
-import { calculatePriceFromSqrtPrice, validatePrice, getCetusPools } from './resolve';
+import { validatePrice, getCetusPools } from './resolve';
+import { getUsdcPerSuiFromPoolState } from './lib/cetusPrice';
 import { Transaction } from '@mysten/sui/transactions';
 import Decimal from 'decimal.js';
 
@@ -184,22 +185,14 @@ export async function getCetusPriceByPool(poolMeta: {
       throw new Error('sqrtPrice not found in pool state');
     }
 
-    // Determine coin ordering
-    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+    // Use shared helper for consistent price calculation
+    const price = getUsdcPerSuiFromPoolState({
+      sqrt_price: sqrtPriceStr,
+      coinTypeA: poolMeta.coinTypeA,
+      coinTypeB: poolMeta.coinTypeB,
+    });
 
-    // Calculate price based on coin ordering
-    let price: number;
-
-    if (suiIsCoinA) {
-      // Pool is SUI/USDC, price is in USDC per SUI (what we want)
-      price = calculatePriceFromSqrtPrice(sqrtPriceStr, 9, 6); // SUI decimals=9, USDC=6
-    } else {
-      // Pool is USDC/SUI, price is in SUI per USDC (need to invert)
-      const inversePrice = calculatePriceFromSqrtPrice(sqrtPriceStr, 6, 9);
-      price = 1 / inversePrice;
-    }
-
-    // Sanity check the price
+    // Sanity check the price (helper already does this, but double-check)
     if (!validatePrice(price, `Cetus pool ${poolMeta.poolId.slice(0, 10)}...`)) {
       throw new Error(
         `Price ${price.toFixed(6)} USDC/SUI failed sanity check for pool ${poolMeta.poolId}`
@@ -214,9 +207,12 @@ export async function getCetusPriceByPool(poolMeta: {
 }
 
 /**
- * Get executable quote for a specific Cetus pool (USDC -> SUI)
+ * Get executable quote for a specific Cetus pool swapping B to A
+ * Direction depends on pool coin ordering:
+ * - If pool is Pool<SUI, USDC>: B2A = USDC -> SUI
+ * - If pool is Pool<USDC, SUI>: B2A = SUI -> USDC
  * @param poolMeta Pool metadata
- * @param amountIn Amount of USDC to swap (in smallest units)
+ * @param amountIn Amount of coin B to swap (in smallest units)
  * @param feePercent Fee percentage for this pool
  * @returns Quote with expected output and sqrt_price_limit
  */
@@ -228,7 +224,7 @@ export async function quoteCetusPoolSwapB2A(
   try {
     const client = getSuiClient();
 
-    // Get current price from this specific pool
+    // Get current price from this specific pool (always USDC per SUI)
     const price = await getCetusPriceByPool(poolMeta);
 
     // Safety check: reject if price is implausible
@@ -238,14 +234,32 @@ export async function quoteCetusPoolSwapB2A(
       );
     }
 
-    // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
-    const usdcAmount = new Decimal(amountIn.toString()).div(1e6);
-    const suiAmount = usdcAmount.div(price);
-    const suiSmallestUnit = suiAmount.mul(1e9);
+    // Determine if coin B is SUI or USDC
+    const bIsSui = poolMeta.coinTypeB === COIN_TYPES.SUI;
+    
+    let amountOutAfterFee: Decimal;
 
-    // Apply fee
-    const feeMultiplier = new Decimal(1).minus(feePercent / 100);
-    const amountOutAfterFee = suiSmallestUnit.mul(feeMultiplier);
+    if (bIsSui) {
+      // B2A: SUI -> USDC
+      // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
+      const suiAmount = new Decimal(amountIn.toString()).div(1e9);
+      const usdcAmount = suiAmount.mul(price);
+      const usdcSmallestUnit = usdcAmount.mul(1e6);
+
+      // Apply fee
+      const feeMultiplier = new Decimal(1).minus(feePercent / 100);
+      amountOutAfterFee = usdcSmallestUnit.mul(feeMultiplier);
+    } else {
+      // B2A: USDC -> SUI
+      // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
+      const usdcAmount = new Decimal(amountIn.toString()).div(1e6);
+      const suiAmount = usdcAmount.div(price);
+      const suiSmallestUnit = suiAmount.mul(1e9);
+
+      // Apply fee
+      const feeMultiplier = new Decimal(1).minus(feePercent / 100);
+      amountOutAfterFee = suiSmallestUnit.mul(feeMultiplier);
+    }
 
     // Safety check: ensure output is not zero or negative
     if (amountOutAfterFee.lte(0)) {
@@ -266,10 +280,16 @@ export async function quoteCetusPoolSwapB2A(
     // Determine direction based on coin ordering
     const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
 
-    // For USDC->SUI swap: price moves up if SUI is A, down if USDC is A
-    const slippageMultiplier = suiIsCoinA
-      ? new Decimal(1).plus(config.maxSlippagePercent / 100)
-      : new Decimal(1).minus(config.maxSlippagePercent / 100);
+    // For B2A swap:
+    // - If SUI is A and we're swapping USDC->SUI: price moves up
+    // - If USDC is A and we're swapping SUI->USDC: price moves down
+    const slippageMultiplier = bIsSui
+      ? (suiIsCoinA 
+          ? new Decimal(1).minus(config.maxSlippagePercent / 100)  // SUI->USDC, price down
+          : new Decimal(1).plus(config.maxSlippagePercent / 100))  // SUI->USDC, price up
+      : (suiIsCoinA
+          ? new Decimal(1).plus(config.maxSlippagePercent / 100)   // USDC->SUI, price up
+          : new Decimal(1).minus(config.maxSlippagePercent / 100)); // USDC->SUI, price down
 
     const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
 
@@ -287,9 +307,12 @@ export async function quoteCetusPoolSwapB2A(
 }
 
 /**
- * Get executable quote for a specific Cetus pool (SUI -> USDC)
+ * Get executable quote for a specific Cetus pool swapping A to B
+ * Direction depends on pool coin ordering:
+ * - If pool is Pool<SUI, USDC>: A2B = SUI -> USDC
+ * - If pool is Pool<USDC, SUI>: A2B = USDC -> SUI
  * @param poolMeta Pool metadata
- * @param amountIn Amount of SUI to swap (in smallest units)
+ * @param amountIn Amount of coin A to swap (in smallest units)
  * @param feePercent Fee percentage for this pool
  * @returns Quote with expected output and sqrt_price_limit
  */
@@ -301,7 +324,7 @@ export async function quoteCetusPoolSwapA2B(
   try {
     const client = getSuiClient();
 
-    // Get current price from this specific pool
+    // Get current price from this specific pool (always USDC per SUI)
     const price = await getCetusPriceByPool(poolMeta);
 
     // Safety check: reject if price is implausible
@@ -311,14 +334,32 @@ export async function quoteCetusPoolSwapA2B(
       );
     }
 
-    // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
-    const suiAmount = new Decimal(amountIn.toString()).div(1e9);
-    const usdcAmount = suiAmount.mul(price);
-    const usdcSmallestUnit = usdcAmount.mul(1e6);
+    // Determine if coin A is SUI or USDC
+    const aIsSui = poolMeta.coinTypeA === COIN_TYPES.SUI;
+    
+    let amountOutAfterFee: Decimal;
 
-    // Apply fee
-    const feeMultiplier = new Decimal(1).minus(feePercent / 100);
-    const amountOutAfterFee = usdcSmallestUnit.mul(feeMultiplier);
+    if (aIsSui) {
+      // A2B: SUI -> USDC
+      // Calculate expected output: amountIn (SUI) * price = amountOut (USDC)
+      const suiAmount = new Decimal(amountIn.toString()).div(1e9);
+      const usdcAmount = suiAmount.mul(price);
+      const usdcSmallestUnit = usdcAmount.mul(1e6);
+
+      // Apply fee
+      const feeMultiplier = new Decimal(1).minus(feePercent / 100);
+      amountOutAfterFee = usdcSmallestUnit.mul(feeMultiplier);
+    } else {
+      // A2B: USDC -> SUI
+      // Calculate expected output: amountIn (USDC) / price = amountOut (SUI)
+      const usdcAmount = new Decimal(amountIn.toString()).div(1e6);
+      const suiAmount = usdcAmount.div(price);
+      const suiSmallestUnit = suiAmount.mul(1e9);
+
+      // Apply fee
+      const feeMultiplier = new Decimal(1).minus(feePercent / 100);
+      amountOutAfterFee = suiSmallestUnit.mul(feeMultiplier);
+    }
 
     // Safety check: ensure output is not zero or negative
     if (amountOutAfterFee.lte(0)) {
@@ -336,13 +377,12 @@ export async function quoteCetusPoolSwapA2B(
       content.fields.current_sqrt_price || content.fields.sqrt_price
     );
 
-    // Determine direction based on coin ordering
-    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
-
-    // For SUI->USDC swap: price moves down if SUI is A, up if USDC is A
-    const slippageMultiplier = suiIsCoinA
-      ? new Decimal(1).minus(config.maxSlippagePercent / 100)
-      : new Decimal(1).plus(config.maxSlippagePercent / 100);
+    // For A2B swap:
+    // - If SUI is A and we're swapping SUI->USDC: price moves down
+    // - If USDC is A and we're swapping USDC->SUI: price moves up
+    const slippageMultiplier = aIsSui
+      ? new Decimal(1).minus(config.maxSlippagePercent / 100)  // SUI->USDC, price down
+      : new Decimal(1).plus(config.maxSlippagePercent / 100);  // USDC->SUI, price up
 
     const sqrtPriceLimit = currentSqrtPrice.mul(slippageMultiplier.sqrt()).toFixed(0);
 
