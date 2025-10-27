@@ -159,4 +159,4 @@ console.log('=== Summary ===');
 console.log(`Total: ${passed + failed} tests`);
 console.log(`Passed: ${passed}`);
 console.log(`Failed: ${failed}`);
-console.log(passed === passed + failed && failed === 0 ? '✓ All tests passed!' : '✗ Some tests failed');
+console.log(failed === 0 ? '✓ All tests passed!' : '✗ Some tests failed');
