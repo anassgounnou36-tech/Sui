@@ -20,7 +20,9 @@ try {
   const feeBps = 5; // 0.05% = 5 bps
   const repayAmount = calculateRepayAmountFromBps(principal, feeBps);
   
-  // Expected: 1000000000 + ceil(1000000000 * 5 / 10000) = 1000000000 + 500000 = 1000500000
+  // Expected: 1000000000 + ceil(1000000000 * 5 / 10000)
+  // = 1000000000 + ceil(500000) = 1000000000 + 500000 = 1000500000
+  // Note: In this case ceiling doesn't change the result as division is exact
   const expectedFee = BigInt(500000);
   const expectedRepay = principal + expectedFee;
   
@@ -54,9 +56,9 @@ console.log();
 // Test 5: Verify overloads concept (can't test runtime without network)
 console.log('Test 5: readSuilendReserveConfig overloads');
 console.log('Supported signatures:');
-console.log('  - readSuilendReserveConfig() - uses env defaults');
-console.log('  - readSuilendReserveConfig(coinType)');
-console.log('  - readSuilendReserveConfig(client, marketId, coinType?, opts?)');
+console.log('  - readSuilendReserveConfig() - uses env defaults (coinType optional)');
+console.log('  - readSuilendReserveConfig(coinType?) - convenience overload');
+console.log('  - readSuilendReserveConfig(client, marketId, coinType?, opts?) - explicit control');
 console.log('✓ Overload structure implemented');
 console.log();
 
