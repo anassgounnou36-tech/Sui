@@ -1,8 +1,8 @@
 import { config } from '../src/config';
 import { initializeRpcClient, getSuiClient } from '../src/utils/sui';
 import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
-import { getCetusPriceByPool } from '../src/cetusIntegration';
 import { COIN_TYPES } from '../src/addresses';
+import { getExecutablePriceUsdcPerSui } from '../src/lib/cetusPrice';
 
 /**
  * Calculate spread percentage between two prices
@@ -39,10 +39,11 @@ async function printSpread() {
 
     console.log('Fetching prices from Cetus 0.05% and 0.25% pools...\n');
 
-    // Fetch prices using real SDK from both pools
+    // Fetch prices using shared price helper with quote-based approach
+    const quoteAmount = BigInt(config.flashloanAmount); // Use configured flashloan amount for quote
     const [price005, price025] = await Promise.all([
-      getCetusPriceByPool(pools.pool005),
-      getCetusPriceByPool(pools.pool025),
+      getExecutablePriceUsdcPerSui(pools.pool005.poolId, quoteAmount),
+      getExecutablePriceUsdcPerSui(pools.pool025.poolId, quoteAmount),
     ]);
 
     // Display prices
