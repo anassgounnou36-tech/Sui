@@ -5,6 +5,7 @@
 import Decimal from 'decimal.js';
 
 const Q64 = new Decimal(2).pow(64);
+const PRICE_TOLERANCE = 0.01; // Allow 0.01 difference for floating point comparison
 
 console.log('=== Testing Cetus sqrt_price Formula ===\n');
 
@@ -38,7 +39,7 @@ console.log(`  SUI per USDC: ${suiPerUsdc.toFixed(6)}`);
 
 const usdcPerSui1 = new Decimal(1).div(suiPerUsdc);
 console.log(`  USDC per SUI: ${usdcPerSui1.toFixed(6)}`);
-console.log(`  Match target? ${Math.abs(usdcPerSui1.toNumber() - targetPrice) < 0.01 ? 'YES' : 'NO'}\n`);
+console.log(`  Match target? ${Math.abs(usdcPerSui1.toNumber() - targetPrice) < PRICE_TOLERANCE ? 'YES' : 'NO'}\n`);
 
 // Case 2: Pool<USDC, SUI>
 console.log('Case 2: Pool<USDC, SUI>');
@@ -62,7 +63,7 @@ console.log(`  Price ratio (USDC/SUI * 0.001): ${priceRatio2.toFixed(6)}`);
 
 const usdcPerSui2 = priceRatio2.div(0.001);
 console.log(`  USDC per SUI: ${usdcPerSui2.toFixed(6)}`);
-console.log(`  Match target? ${Math.abs(usdcPerSui2.toNumber() - targetPrice) < 0.01 ? 'YES' : 'NO'}\n`);
+console.log(`  Match target? ${Math.abs(usdcPerSui2.toNumber() - targetPrice) < PRICE_TOLERANCE ? 'YES' : 'NO'}\n`);
 
 console.log('=== Summary ===');
 console.log('For Pool<SUI, USDC> to get USDC per SUI:');
