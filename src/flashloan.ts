@@ -161,18 +161,17 @@ export async function borrowFromSuilend(
     const safetyBuffer = BigInt(config.suilendSafetyBuffer);
     const maxBorrow = finalConfig.availableAmount - safetyBuffer;
     
+    // Helper for unit conversion
+    const isSui = coinType === COIN_TYPES.SUI;
+    const unit = isSui ? 'SUI' : 'USDC';
+    const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
+    
     if (amount > maxBorrow) {
-      const isSui = coinType === COIN_TYPES.SUI;
-      const requestedHuman = isSui ? smallestUnitToSui(amount) : smallestUnitToUsdc(amount);
-      const availableHuman = isSui ? smallestUnitToSui(maxBorrow) : smallestUnitToUsdc(maxBorrow);
-      const totalAvailableHuman = isSui ? smallestUnitToSui(finalConfig.availableAmount) : smallestUnitToUsdc(finalConfig.availableAmount);
-      const unit = isSui ? 'SUI' : 'USDC';
-      
       const errorMsg = 
         `Insufficient Suilend reserve capacity:\n` +
-        `  Requested: ${requestedHuman.toFixed(2)} ${unit}\n` +
-        `  Available: ${availableHuman.toFixed(2)} ${unit} (after ${safetyBuffer} buffer)\n` +
-        `  Total reserve available: ${totalAvailableHuman.toFixed(2)} ${unit}\n` +
+        `  Requested: ${toHuman(amount).toFixed(2)} ${unit}\n` +
+        `  Available: ${toHuman(maxBorrow).toFixed(2)} ${unit} (after ${safetyBuffer} buffer)\n` +
+        `  Total reserve available: ${toHuman(finalConfig.availableAmount).toFixed(2)} ${unit}\n` +
         `  Reserve index: ${finalConfig.reserveIndex}\n` +
         `To fix: Reduce FLASHLOAN_AMOUNT or adjust SUILEND_SAFETY_BUFFER`;
       
@@ -185,10 +184,7 @@ export async function borrowFromSuilend(
     
     // Calculate and log repay amount
     const repayAmount = calculateRepayAmountFromBps(amount, finalConfig.borrowFeeBps);
-    const isSui = coinType === COIN_TYPES.SUI;
-    const repayHuman = isSui ? smallestUnitToSui(repayAmount) : smallestUnitToUsdc(repayAmount);
-    const unit = isSui ? 'SUI' : 'USDC';
-    logger.info(`  Repay amount: ${repayHuman.toFixed(6)} ${unit}`);
+    logger.info(`  Repay amount: ${toHuman(repayAmount).toFixed(6)} ${unit}`);
 
     // Suilend flashloan entrypoint per Perplexity spec:
     // lending::flash_borrow(lending_market, reserve_index, amount) -> (Coin<T>, FlashLoanReceipt)
