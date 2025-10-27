@@ -6,6 +6,7 @@ import { resolvePoolAddresses, getCetusPools } from './resolve';
 import { getCetusPriceByPool } from './cetusIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';
 import { COIN_TYPES } from './addresses';
+import { initializeTelegramNotifier, TelegramNotifier } from './notify/telegram';
 
 // State tracking
 let lastExecutionTime = 0;
@@ -16,6 +17,7 @@ let totalProfitUsdc = 0;
 let totalExecutions = 0;
 let successfulExecutions = 0;
 let consecutiveFailures = 0; // Kill switch counter
+let telegramNotifier: TelegramNotifier;
 
 /**
  * Calculate spread percentage between two prices
@@ -128,8 +130,22 @@ async function feeTierMonitoringLoop() {
       consecutiveSpreadCount++;
       logger.info(`Consecutive spread count: ${consecutiveSpreadCount}`);
     } else {
+      // Direction changed or first detection - notify about new opportunity
       consecutiveSpreadCount = 1;
       lastSpreadDirection = direction;
+      
+      try {
+        await telegramNotifier.notifyOpportunity(
+          price005,
+          price025,
+          spread,
+          direction,
+          pools.pool005.poolId,
+          pools.pool025.poolId
+        );
+      } catch (error) {
+        logger.error('Failed to send Telegram opportunity notification', error);
+      }
     }
 
     // Require 2 consecutive ticks with same direction
@@ -153,7 +169,19 @@ async function feeTierMonitoringLoop() {
     lastExecutionTime = Date.now();
     totalExecutions++;
 
-    const result = await executeFlashloanArb(direction, flashloanAmount, minProfit);
+    const result = await executeFlashloanArb(
+      direction,
+      flashloanAmount,
+      minProfit,
+      // Notification callback: called after validation passes, before PTB building
+      async (dir, amount, minProf, expectedProfit, isDryRun) => {
+        try {
+          await telegramNotifier.notifyExecutionStart(dir, amount, minProf, expectedProfit, isDryRun);
+        } catch (error) {
+          logger.error('Failed to send Telegram execution start notification', error);
+        }
+      }
+    );
 
     pendingTransactions--;
 
@@ -185,6 +213,20 @@ async function feeTierMonitoringLoop() {
         status: 'success',
       });
 
+      // Notify execution result
+      try {
+        await telegramNotifier.notifyExecutionResult(
+          direction,
+          true,
+          result.profit,
+          result.txDigest,
+          undefined,
+          config.dryRun
+        );
+      } catch (error) {
+        logger.error('Failed to send Telegram execution result notification (success)', error);
+      }
+
       // Reset consecutive count after successful execution
       consecutiveSpreadCount = 0;
       lastSpreadDirection = null;
@@ -203,6 +245,19 @@ async function feeTierMonitoringLoop() {
         status: 'failed',
         error: result.error,
       });
+
+      // Notify execution result
+      try {
+        await telegramNotifier.notifyExecutionResult(
+          direction,
+          false,
+          undefined,
+          undefined,
+          result.error
+        );
+      } catch (error) {
+        logger.error('Failed to send Telegram execution result notification (failure)', error);
+      }
 
       // Kill switch: Stop if too many consecutive failures
       if (consecutiveFailures >= config.maxConsecutiveFailures) {
@@ -252,6 +307,10 @@ async function main() {
       logger.warn('=== DRY RUN MODE ENABLED ===');
       logger.warn('Transactions will be simulated but not executed');
     }
+
+    // Initialize Telegram notifier
+    logger.info('Initializing Telegram notifier...');
+    telegramNotifier = initializeTelegramNotifier();
 
     // Initialize Sui client with multi-RPC failover
     logger.info('Initializing Sui RPC client with failover...');

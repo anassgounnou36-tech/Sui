@@ -23,7 +23,16 @@ export interface ArbResult {
   profit?: bigint;
   txDigest?: string;
   error?: string;
+  expectedProfit?: bigint;
 }
+
+export type NotifyExecutionStartFn = (
+  direction: ArbDirection,
+  flashloanAmount: bigint,
+  minProfit: bigint,
+  expectedProfit: bigint,
+  isDryRun: boolean
+) => Promise<void>;
 
 /**
  * Validate that arbitrage opportunity is safe and profitable
@@ -146,12 +155,14 @@ async function validateArbOpportunity(
  * @param direction Direction of arbitrage
  * @param amount Flashloan amount in USDC (smallest units)
  * @param minProfit Minimum required profit in USDC (smallest units)
+ * @param onValidationSuccess Optional callback when validation passes (before PTB building)
  * @returns Execution result
  */
 export async function executeFlashloanArb(
   direction: ArbDirection,
   amount: bigint,
-  minProfit: bigint
+  minProfit: bigint,
+  onValidationSuccess?: NotifyExecutionStartFn
 ): Promise<ArbResult> {
   logger.info(`Executing arbitrage: ${direction}, amount: ${amount}, minProfit: ${minProfit}`);
 
@@ -186,6 +197,11 @@ export async function executeFlashloanArb(
     let repayAmount = validation.quotes!.repayAmount;
 
     logger.success('✓ Opportunity validated, proceeding with execution');
+
+    // Notify execution start (after validation passes, before PTB building)
+    if (onValidationSuccess) {
+      await onValidationSuccess(direction, amount, minProfit, expectedProfit, config.dryRun);
+    }
 
     // Build the transaction
     const tx = buildTransaction();
@@ -341,6 +357,7 @@ export async function executeFlashloanArb(
       return {
         success: true,
         profit: expectedProfit,
+        expectedProfit,
       };
     }
 
@@ -361,6 +378,7 @@ export async function executeFlashloanArb(
       success: true,
       profit,
       txDigest: result.digest,
+      expectedProfit,
     };
   } catch (error) {
     logger.error('Arbitrage execution failed', error);
