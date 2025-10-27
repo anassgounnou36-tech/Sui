@@ -83,14 +83,35 @@ export async function readSuilendReserveConfig(
       throw new Error('Invalid lending market object type');
     }
 
-    // Step 2: Extract Bag ID from market.content.fields.reserves.fields.id.id
-    const reservesBag = content.fields?.reserves;
-    if (!reservesBag || !reservesBag.fields || !reservesBag.fields.id || !reservesBag.fields.id.id) {
-      throw new Error('Cannot extract Bag ID from lending market reserves field');
+    // Step 2: Extract Bag ID from market reserves container (defensive extraction)
+    // Support multiple container names: reserves, reserves_bag, reservesBag
+    const reservesBag = content.fields?.reserves 
+      || content.fields?.reserves_bag 
+      || content.fields?.reservesBag;
+    
+    if (!reservesBag) {
+      logger.debug('[Suilend] DEBUG: content.fields structure:');
+      logger.debug(JSON.stringify(content.fields, null, 2));
+      throw new Error('Cannot extract Bag ID from lending market reserves field: reserves container not found');
     }
     
-    const bagId: string = reservesBag.fields.id.id;
-    logger.info(`✓ Discovered Suilend reserves Bag ID: ${bagId}`);
+    // Extract bagId defensively from multiple possible patterns
+    let bagId: string | undefined;
+    if (reservesBag.fields?.id?.id) {
+      bagId = reservesBag.fields.id.id;
+    } else if (reservesBag.fields?.id?.value) {
+      bagId = reservesBag.fields.id.value;
+    } else if (reservesBag.fields?.id) {
+      bagId = reservesBag.fields.id;
+    }
+    
+    if (!bagId || typeof bagId !== 'string') {
+      logger.debug('[Suilend] DEBUG: reservesBag.fields structure:');
+      logger.debug(JSON.stringify(reservesBag.fields, null, 2));
+      throw new Error('Cannot extract Bag ID from lending market reserves field: ID not found in expected locations');
+    }
+    
+    logger.info(`[Suilend] Reserves Bag ID: ${bagId}`);
 
     // Step 3: Paginate through dynamic fields
     let hasNextPage = true;
