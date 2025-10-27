@@ -31,6 +31,41 @@ export interface SuilendReserveConfig {
 }
 
 /**
+ * Extract coin type from a reserve entry using multiple fallback strategies
+ * @param entry Reserve entry from the reserves vector
+ * @returns Extracted and normalized coin type string, or undefined if not found
+ */
+function getCoinTypeFromReserveEntry(entry: any): string | undefined {
+  const reserveFields = entry.fields || entry;
+  
+  // Strategy a) TypeName canonical: entry.fields.coin_type.fields.name
+  if (reserveFields?.coin_type?.fields?.name) {
+    return String(reserveFields.coin_type.fields.name).trim();
+  }
+  
+  // Strategy b) Alternate SDK flattening: entry.fields.coin_type.name
+  if (reserveFields?.coin_type?.name) {
+    return String(reserveFields.coin_type.name).trim();
+  }
+  
+  // Strategy c) Direct string: entry.fields.coin_type
+  if (typeof reserveFields?.coin_type === 'string') {
+    return reserveFields.coin_type.trim();
+  }
+  
+  // Strategy d) Parse from entry.type via regex as last-resort hint
+  // Format: "...::reserve::Reserve<COIN_TYPE>"
+  if (entry.type && typeof entry.type === 'string') {
+    const match = entry.type.match(/::reserve::Reserve<(.+)>$/);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+  
+  return undefined;
+}
+
+/**
  * Read Suilend reserve configuration using Bag-based discovery
  * Overload: (client, marketId, coinType?, opts?) for explicit control
  * Overload: (coinType?) for convenience, uses env vars and default client
@@ -55,13 +90,13 @@ export async function readSuilendReserveConfig(
     // Overload: readSuilendReserveConfig(coinType?)
     client = getSuiClient();
     market = process.env.SUILEND_LENDING_MARKET || SUILEND.lendingMarket;
-    targetCoinType = clientOrCoinType || COIN_TYPES.SUI;
+    targetCoinType = process.env.SUILEND_TARGET_COIN_TYPE || clientOrCoinType || COIN_TYPES.SUI;
     logger.debug(`Using convenience overload: market=${market}, coinType=${targetCoinType}`);
   } else {
     // Overload: readSuilendReserveConfig(client, marketId, coinType?, opts?)
     client = clientOrCoinType;
     market = marketId!;
-    targetCoinType = coinType || COIN_TYPES.SUI;
+    targetCoinType = process.env.SUILEND_TARGET_COIN_TYPE || coinType || COIN_TYPES.SUI;
     logger.debug(`Using explicit overload: market=${market}, coinType=${targetCoinType}`);
   }
   
@@ -93,35 +128,36 @@ export async function readSuilendReserveConfig(
       // Vector path: reserves is a direct array
       logger.info(`[Suilend] Using vector-based discovery: ${reserves.length} reserves found`);
       
-      // Debug: Log first 2 reserve types to verify parsing
-      if (reserves.length > 0) {
-        logger.debug('[Suilend] DEBUG - First reserve types for verification:');
-        for (let i = 0; i < Math.min(2, reserves.length); i++) {
-          const debugType = reserves[i]?.type || 'no type field';
-          logger.debug(`  Reserve[${i}].type: ${debugType}`);
+      // Diagnostic logging for first 3 entries (always on)
+      const numToLog = Math.min(3, reserves.length);
+      for (let i = 0; i < numToLog; i++) {
+        const reserve = reserves[i];
+        logger.info(`[Suilend] Reserve[${i}] diagnostics:`);
+        logger.info(`  - type: ${reserve?.type || 'no type field'}`);
+        logger.info(`  - fields keys: ${Object.keys(reserve?.fields || {}).join(', ')}`);
+        
+        // Log full coin_type object structure
+        if (reserve?.fields?.coin_type) {
+          logger.info(`  - coin_type object: ${JSON.stringify(reserve.fields.coin_type)}`);
+        } else {
+          logger.info(`  - coin_type object: not present`);
         }
+        
+        // Log extracted coin type used for comparison
+        const extractedType = getCoinTypeFromReserveEntry(reserve);
+        logger.info(`  - extracted coin type: ${extractedType || 'could not extract'}`);
       }
+      
+      // Collect all extracted coin types for failure reporting
+      const allExtractedTypes: (string | undefined)[] = [];
       
       for (let index = 0; index < reserves.length; index++) {
         const reserve = reserves[index];
         const reserveFields = reserve.fields || reserve;
         
-        // Primary: Prefer coin type from TypeName path (fields.coin_type.fields.name)
-        let reserveCoinType: string | undefined = reserveFields?.coin_type?.fields?.name 
-          || reserveFields?.coin_type?.name 
-          || reserveFields?.coin_type;
-        let matchMethod: string = 'TypeName';
-        
-        // Fallback: Parse coin type from reserve.type generic parameter if TypeName path is missing
-        // Format: "...::reserve::Reserve<0x2::sui::SUI>"
-        // Extract the generic parameter using regex
-        if (!reserveCoinType && reserve.type && typeof reserve.type === 'string') {
-          const match = reserve.type.match(/::reserve::Reserve<(.+)>$/);
-          if (match && match[1]) {
-            reserveCoinType = match[1];
-            matchMethod = 'type-string parsing (fallback)';
-          }
-        }
+        // Use helper function for robust coin type extraction
+        const reserveCoinType = getCoinTypeFromReserveEntry(reserve);
+        allExtractedTypes.push(reserveCoinType);
         
         if (reserveCoinType === targetCoinType) {
           // Extract config fields - fee is at config.fields.borrow_fee (bps)
@@ -148,8 +184,7 @@ export async function readSuilendReserveConfig(
 
           logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
           logger.info(`  Reserve index: ${index}`);
-          logger.info(`  Match method: ${matchMethod}`);
-          logger.info(`  Parsed coin type: ${reserveCoinType}`);
+          logger.info(`  Extracted coin type: ${reserveCoinType}`);
           logger.info(`  Fee (borrow_fee): ${feeBps} bps (${feeBps / 100}%)`);
           logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
           logger.info(`  Sample repay (for 1000 ${unit} principal): ${toHuman(sampleRepay).toFixed(6)} ${unit}`);
@@ -166,11 +201,17 @@ export async function readSuilendReserveConfig(
         }
       }
       
-      // Not found in vector
+      // Not found in vector - log all extracted coin types for diagnosis
+      const validTypes = allExtractedTypes.filter(t => t !== undefined) as string[];
+      const typesList = validTypes.length > 0 
+        ? validTypes.join(', ') 
+        : 'no valid coin types extracted';
+      
       const errorMsg = `Could not find reserve for coin type ${targetCoinType} in Suilend reserves vector (searched ${reserves.length} reserves)`;
+      logger.error(errorMsg);
+      logger.error(`Extracted coin types from all reserves: ${typesList}`);
       
       if (config.dryRun) {
-        logger.warn(errorMsg);
         logger.warn('Using default reserve config for simulation purposes.');
         
         return {
@@ -182,7 +223,6 @@ export async function readSuilendReserveConfig(
           borrowFeeBps: 5,
         };
       } else {
-        logger.error(errorMsg);
         throw new Error(`${errorMsg}. Verify SUILEND_LENDING_MARKET and reserve configuration.`);
       }
     }
@@ -291,9 +331,7 @@ export async function readSuilendReserveConfig(
 
         // Check if this reserve matches the target coin type
         const reserveFields = fieldContent.fields?.value?.fields || fieldContent.fields;
-        const reserveCoinType = reserveFields?.coin_type?.fields?.name 
-          || reserveFields?.coin_type?.name 
-          || reserveFields?.coin_type;
+        const reserveCoinType = getCoinTypeFromReserveEntry({ fields: reserveFields, type: fieldContent.type });
 
         if (reserveCoinType === targetCoinType) {
           // Extract config fields
