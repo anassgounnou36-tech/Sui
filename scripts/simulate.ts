@@ -81,7 +81,7 @@ async function simulateArbitrage() {
     console.log('USDC -> SUI (buy back):');
     console.log(`  Expected: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI\n`);
 
-    // Calculate repay amount using dynamic fee (per Perplexity spec)
+    // Calculate repay amount using dynamic fee with ceiling division
     const repayAmount = computeRepayAmountBase(flashloanAmount, reserveConfig.borrowFeeBps);
     const fee = repayAmount - flashloanAmount;
 

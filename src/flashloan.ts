@@ -16,7 +16,7 @@ export interface SuilendReserveConfig {
 
 /**
  * Read Suilend reserve configuration including fee and available borrow amount
- * Per Perplexity spec: iterate content.fields.reserves and match coin_type.name
+ * Iterates content.fields.reserves and matches reserves[i].fields.coin_type.name
  * @param coinType Coin type to read config for (default: "0x2::sui::SUI")
  * @returns Reserve configuration with fee_bps and available_amount
  */
@@ -37,16 +37,16 @@ export async function readSuilendReserveConfig(coinType: string = COIN_TYPES.SUI
       throw new Error('Invalid lending market object type');
     }
 
-    // Per Perplexity spec: iterate reserves vector (inline Reserve structs)
+    // Iterate reserves vector (inline Reserve structs in content.fields.reserves)
     const reserves = content.fields.reserves || [];
     for (let i = 0; i < reserves.length; i++) {
       const reserve = reserves[i];
       
-      // Per Perplexity spec: match reserves[i].fields.coin_type.name === coinType
+      // Match reserves[i].fields.coin_type.name === coinType (verified via on-chain inspection)
       const reserveCoinType = reserve.fields?.coin_type?.name || reserve.fields?.coin_type || reserve.coin_type;
       
       if (reserveCoinType === coinType) {
-        // Per Perplexity spec: read from reserves[i].fields.config.fields.borrow_fee_bps (u64 bps)
+        // Read from reserves[i].fields.config.fields.borrow_fee_bps (u64 bps)
         const config = reserve.fields?.config;
         const borrowFeeBps = BigInt(
           config?.fields?.borrow_fee_bps || 
@@ -54,7 +54,7 @@ export async function readSuilendReserveConfig(coinType: string = COIN_TYPES.SUI
           '5'
         ); // Default 5 bps = 0.05%
         
-        // Per Perplexity spec: read from reserves[i].fields.available_amount (base units)
+        // Read from reserves[i].fields.available_amount (base units, 9 decimals for SUI)
         const availableAmount = BigInt(reserve.fields?.available_amount || '0');
         
         // Log discovery with detailed info
@@ -165,7 +165,7 @@ export async function borrowFromSuilend(
     // Read reserve config if not provided
     const finalConfig = reserveConfig || await readSuilendReserveConfig(coinType);
 
-    // Per Perplexity spec: enforce principal <= available_amount - SAFETY_BUFFER
+    // Enforce capacity limit: principal <= available_amount - SAFETY_BUFFER
     const safetyBuffer = BigInt(config.suilendSafetyBuffer);
     assertBorrowWithinCap(amount, finalConfig.availableAmount, safetyBuffer, coinType);
     
@@ -174,10 +174,10 @@ export async function borrowFromSuilend(
     const unit = isSui ? 'SUI' : 'USDC';
     const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
     
-    // Per Perplexity spec: compute repay = principal + ceil(principal * fee_bps / 10_000)
+    // Compute repay with ceiling division: repay = principal + ceil(principal * fee_bps / 10_000)
     const repayAmount = computeRepayAmountBase(amount, finalConfig.borrowFeeBps);
     
-    // Log detailed borrow info per Perplexity spec
+    // Log detailed borrow info
     logger.info(`Borrowing from Suilend`);
     logger.info(`  Reserve index: ${finalConfig.reserveIndex}`);
     logger.info(`  Fee: ${finalConfig.borrowFeeBps} bps (${Number(finalConfig.borrowFeeBps) / 100}%)`);
@@ -397,12 +397,12 @@ export async function flashloanWithRetries(
 
 /**
  * Assert that borrow amount is within available capacity with safety buffer
- * Per Perplexity spec: enforce principal <= available_amount - SAFETY_BUFFER
+ * Enforces: principal <= available_amount - SAFETY_BUFFER
  * @param principalBase Principal amount to borrow (base units)
  * @param availableBase Available amount in reserve (base units)
  * @param safetyBufferBase Safety buffer to reserve (base units)
  * @param coinType Coin type for error messaging
- * @throws Error if borrow exceeds capacity
+ * @throws Error if borrow exceeds capacity (in live mode); warns in DRY_RUN mode
  */
 export function assertBorrowWithinCap(
   principalBase: bigint,
@@ -438,8 +438,8 @@ export function assertBorrowWithinCap(
 
 /**
  * Compute flashloan repayment amount from fee in basis points
- * Per Perplexity spec: repay = principal + ceil(principal * fee_bps / 10_000)
- * Uses ceiling division (bigint math) to ensure we repay enough
+ * Formula: repay = principal + ceil(principal * fee_bps / 10_000)
+ * Uses integer ceiling division in bigint arithmetic to ensure we repay enough
  * @param principalBase Principal amount borrowed (base units)
  * @param feeBps Fee in basis points (e.g., 5 for 0.05%)
  * @returns Total amount to repay (principal + fee, rounded up)

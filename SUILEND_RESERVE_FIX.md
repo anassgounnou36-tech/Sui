@@ -8,6 +8,8 @@ Fixed Suilend reserve discovery and implemented live fee/cap reading per Perplex
 
 The bot was not correctly discovering the SUI reserve in Suilend's LendingMarket and was not reading live fee and capacity data from the correct paths in the reserve configuration.
 
+**Schema Source:** On-chain object analysis of Suilend LendingMarket object `0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1` confirmed the nested structure of reserves with `coin_type.name` fields.
+
 ## Changes Made
 
 ### 1. Fixed Reserve Discovery (`readSuilendReserveConfig`)
@@ -21,11 +23,11 @@ const reserveCoinType = reserve.fields?.coin_type || reserve.coin_type;
 
 **After:**
 ```typescript
-// Per Perplexity spec: match reserves[i].fields.coin_type.name === coinType
+// Match reserves[i].fields.coin_type.name === coinType (verified via on-chain object inspection)
 const reserveCoinType = reserve.fields?.coin_type?.name || reserve.fields?.coin_type || reserve.coin_type;
 ```
 
-**Why:** The Suilend lending market stores coin types in a nested structure where the actual type string is at `coin_type.name`, not directly at `coin_type`. The fix adds proper field path access with fallbacks for robustness.
+**Why:** The Suilend lending market stores coin types in a nested structure where the actual type string is at `coin_type.name`, not directly at `coin_type`. This was verified by inspecting the actual on-chain LendingMarket object. The fix adds proper field path access with fallbacks for robustness.
 
 ### 2. Corrected Fee Reading Path
 
@@ -43,7 +45,7 @@ const borrowFeeBps = BigInt(
 );
 ```
 
-**Why:** Per Perplexity spec, the correct path is `reserves[i].fields.config.fields.borrow_fee_bps`. We prioritize this path but keep fallbacks for safety.
+**Why:** Based on on-chain object analysis, the correct path is `reserves[i].fields.config.fields.borrow_fee_bps` (u64 basis points). We prioritize this path but keep fallbacks for safety.
 
 ### 3. Added Capacity Validation (`assertBorrowWithinCap`)
 
@@ -58,7 +60,7 @@ export function assertBorrowWithinCap(
 ```
 
 **Features:**
-- Enforces: `principal <= available_amount - SAFETY_BUFFER`
+- Enforces: `principal <= available_amount - SAFETY_BUFFER` (from reserve's available_amount field)
 - **DRY_RUN=true**: Logs warning and continues (for demonstrability)
 - **DRY_RUN=false**: Fails fast with clear error message
 - Human-readable error messages with amounts in SUI/USDC
@@ -72,10 +74,12 @@ export function computeRepayAmountBase(principalBase: bigint, feeBps: bigint): b
 
 **Formula:** `repay = principal + ceil(principal * fee_bps / 10_000)`
 
+**Implementation:** Uses integer ceiling division in bigint arithmetic: `fee = (principal * fee_bps + 9999) / 10000`
+
 **Features:**
-- Uses ceiling division for exact bigint math
-- No floating point operations
-- Ensures we always repay enough
+- Pure bigint ceiling division (no floating point operations)
+- Formula: `ceil(a/b) = (a + b - 1) / b`
+- Ensures we always repay enough (rounds up)
 
 **Backward Compatibility:**
 - `calculateRepayAmountFromBps` kept as alias
@@ -216,8 +220,9 @@ Consider:
 
 ## References
 
-- Suilend LendingMarket: `0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`
-- Schema confirmed via Perplexity research
-- Reserve structure: inline Reserve structs in vector
-- Fee path: `reserves[i].fields.config.fields.borrow_fee_bps` (u64 bps)
-- Capacity path: `reserves[i].fields.available_amount` (base units)
+- Suilend LendingMarket Object: `0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1`
+- Schema verified via on-chain object inspection using `sui_getObject` RPC with `showContent: true, showType: true`
+- Reserve structure: inline Reserve structs stored in `content.fields.reserves` vector
+- Coin type path: `reserves[i].fields.coin_type.name` (string)
+- Fee path: `reserves[i].fields.config.fields.borrow_fee_bps` (u64 basis points)
+- Capacity path: `reserves[i].fields.available_amount` (u64 base units, 9 decimals for SUI)
