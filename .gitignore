@@ -7,6 +7,10 @@ yarn.lock
 dist/
 *.tsbuildinfo
 
+# Compiled JS from TS (only in src/)
+src/**/*.js
+src/**/*.js.map
+
 # Environment
 .env
 .env.local

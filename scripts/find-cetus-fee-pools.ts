@@ -6,7 +6,7 @@
 import { initializeRpcClient } from '../src/utils/sui';
 import { logger } from '../src/logger';
 import { COIN_TYPES } from '../src/addresses';
-import Decimal from 'decimal.js';
+import { chooseUsdcPerSui } from '../src/lib/cetusPrice';
 
 interface PoolInfo {
   poolId: string;
@@ -28,38 +28,24 @@ const KNOWN_POOL_IDS = {
 };
 
 /**
- * Calculate price from sqrtPrice
+ * Calculate price from sqrtPrice using robust helper
  */
 function calculatePrice(
   sqrtPrice: string,
   coinTypeA: string,
-  coinTypeB: string
+  coinTypeB: string,
+  poolId: string
 ): number {
-  const sqrtPriceDec = new Decimal(sqrtPrice);
-  const Q64 = new Decimal(2).pow(64);
+  // Use the robust helper with debug logging
+  logger.debug(`Pool ${poolId.slice(0, 8)}... coin order: A=${coinTypeA.split('::').pop()}, B=${coinTypeB.split('::').pop()}`);
+  logger.debug(`sqrt_price_x64: ${sqrtPrice}`);
   
-  // Price = (sqrtPrice / 2^64)^2
-  const priceRatio = sqrtPriceDec.div(Q64).pow(2);
-  
-  // Determine decimals based on coin order
-  const aIsUsdc = coinTypeA.includes('usdc') || coinTypeA.includes('USDC');
-  const bIsUsdc = coinTypeB.includes('usdc') || coinTypeB.includes('USDC');
-  
-  // Adjust for decimal difference (USDC: 6, SUI: 9)
-  let price: number;
-  if (aIsUsdc && !bIsUsdc) {
-    // Pool is USDC/SUI, so price is USDC per SUI
-    const decimalAdjustment = new Decimal(10).pow(9 - 6);
-    price = priceRatio.mul(decimalAdjustment).toNumber();
-  } else if (!aIsUsdc && bIsUsdc) {
-    // Pool is SUI/USDC, so price is SUI per USDC - need to invert
-    const decimalAdjustment = new Decimal(10).pow(6 - 9);
-    const rawPrice = priceRatio.mul(decimalAdjustment).toNumber();
-    price = 1 / rawPrice;
-  } else {
-    // Unknown ordering, use raw ratio
-    price = priceRatio.toNumber();
-  }
+  const price = chooseUsdcPerSui({
+    poolId,
+    sqrtPriceX64: sqrtPrice,
+    coinTypeA,
+    coinTypeB,
+  });
   
   return price;
 }
@@ -121,7 +107,7 @@ async function fetchPoolInfo(poolId: string): Promise<PoolInfo | null> {
     const liquidity = fields.liquidity || '0';
     
     // Calculate price
-    const price = calculatePrice(currentSqrtPrice.toString(), coinTypeA, coinTypeB);
+    const price = calculatePrice(currentSqrtPrice.toString(), coinTypeA, coinTypeB, poolId);
     
     return {
       poolId,

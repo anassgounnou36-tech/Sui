@@ -7,7 +7,8 @@ import { getSuiClient } from './utils/sui';
 import { logger } from './logger';
 import { CETUS, COIN_TYPES } from './addresses';
 import { config } from './config';
-import { calculatePriceFromSqrtPrice, validatePrice, getCetusPools } from './resolve';
+import { validatePrice, getCetusPools } from './resolve';
+import { chooseUsdcPerSui } from './lib/cetusPrice';
 import { Transaction } from '@mysten/sui/transactions';
 import Decimal from 'decimal.js';
 
@@ -227,20 +228,18 @@ export async function getCetusPriceByPool(poolMeta: {
       throw new Error('sqrtPrice not found in pool state');
     }
 
-    // Determine coin ordering
-    const suiIsCoinA = poolMeta.coinTypeA === COIN_TYPES.SUI;
+    // Use the robust helper
+    logger.debug(`Getting price for pool ${poolMeta.poolId.slice(0, 8)}...`);
+    logger.debug(`  Coin A: ${poolMeta.coinTypeA.split('::').pop()}`);
+    logger.debug(`  Coin B: ${poolMeta.coinTypeB.split('::').pop()}`);
+    logger.debug(`  sqrt_price_x64: ${sqrtPriceStr}`);
 
-    // Calculate price based on coin ordering
-    let price: number;
-
-    if (suiIsCoinA) {
-      // Pool is SUI/USDC, price is in USDC per SUI (what we want)
-      price = calculatePriceFromSqrtPrice(sqrtPriceStr, 9, 6); // SUI decimals=9, USDC=6
-    } else {
-      // Pool is USDC/SUI, price is in SUI per USDC (need to invert)
-      const inversePrice = calculatePriceFromSqrtPrice(sqrtPriceStr, 6, 9);
-      price = 1 / inversePrice;
-    }
+    const price = chooseUsdcPerSui({
+      poolId: poolMeta.poolId,
+      sqrtPriceX64: sqrtPriceStr,
+      coinTypeA: poolMeta.coinTypeA,
+      coinTypeB: poolMeta.coinTypeB,
+    });
 
     // Sanity check the price
     if (!validatePrice(price, `Cetus pool ${poolMeta.poolId.slice(0, 10)}...`)) {
@@ -248,6 +247,8 @@ export async function getCetusPriceByPool(poolMeta: {
         `Price ${price.toFixed(6)} USDC/SUI failed sanity check for pool ${poolMeta.poolId}`
       );
     }
+
+    logger.debug(`Final price: ${price.toFixed(6)} USDC/SUI`);
 
     return price;
   } catch (error) {
