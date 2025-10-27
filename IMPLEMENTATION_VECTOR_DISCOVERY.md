@@ -5,7 +5,7 @@ This implementation prioritizes vector-based Suilend reserve discovery (direct a
 
 ## Problem Statement
 The simulator was failing at reserve discovery with a "Bag ID error" because:
-- Mainnet's LendingMarket.reserves is a direct vector (`content.fields.reserves` as array)
+- Mainnet's LendingMarket. reserves is a direct vector (`content.fields.reserves` as array)
 - The previous implementation only supported Bag/Table-based discovery
 - Fee field path is `config.fields.borrow_fee` (basis points)
 

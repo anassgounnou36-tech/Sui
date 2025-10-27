@@ -39,11 +39,24 @@ console.log();
 // Test 4: Simulate vector vs bag logic (structural test)
 console.log('Test 4: Vector detection logic');
 
-// Mock vector structure
-const vectorReserves = [
-  { fields: { coin_type: { fields: { name: '0x2::sui::SUI' } }, config: { fields: { borrow_fee: '5' } }, available_amount: '1000000000000' } },
-  { fields: { coin_type: { fields: { name: 'some::other::COIN' } }, config: { fields: { borrow_fee: '10' } }, available_amount: '2000000000000' } },
-];
+// Mock vector structure - broken down for readability
+const suiReserve = {
+  fields: {
+    coin_type: { fields: { name: '0x2::sui::SUI' } },
+    config: { fields: { borrow_fee: '5' } },
+    available_amount: '1000000000000'
+  }
+};
+
+const otherReserve = {
+  fields: {
+    coin_type: { fields: { name: 'some::other::COIN' } },
+    config: { fields: { borrow_fee: '10' } },
+    available_amount: '2000000000000'
+  }
+};
+
+const vectorReserves = [suiReserve, otherReserve];
 
 const isVector = Array.isArray(vectorReserves);
 console.log('  Mock vector reserves array detected:', isVector);
