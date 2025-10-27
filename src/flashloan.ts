@@ -1,11 +1,27 @@
 import { Transaction } from '@mysten/sui/transactions';
+import { SuiClient } from '@mysten/sui/client';
 import { logger } from './logger';
 import { config, smallestUnitToSui, smallestUnitToUsdc } from './config';
 import { SUILEND, NAVI, COIN_TYPES } from './addresses';
 import { sleep, getSuiClient } from './utils/sui';
 
 /**
- * Suilend reserve configuration
+ * Suilend reserve configuration with backward-compatible fields
+ */
+export interface ReserveConfig {
+  // New fields
+  reserveKey: string;
+  feeBps: number;
+  availableAmount: bigint;
+  coinType?: string;
+  
+  // Backward-compatible aliases
+  reserveIndex?: number;
+  borrowFeeBps?: number;
+}
+
+/**
+ * @deprecated Use ReserveConfig instead
  */
 export interface SuilendReserveConfig {
   reserveIndex: number;
@@ -15,16 +31,46 @@ export interface SuilendReserveConfig {
 }
 
 /**
- * Read Suilend reserve configuration including fee and available borrow amount
- * Iterates content.fields.reserves and matches reserves[i].fields.coin_type.name
- * @param coinType Coin type to read config for (default: "0x2::sui::SUI")
- * @returns Reserve configuration with fee_bps and available_amount
+ * Read Suilend reserve configuration using Bag-based discovery
+ * Overload: (client, marketId, coinType?, opts?) for explicit control
+ * Overload: (coinType?) for convenience, uses env vars and default client
+ * @param clientOrCoinType SuiClient instance or coin type string
+ * @param marketId Market object ID (required if first param is SuiClient)
+ * @param coinType Coin type to discover (optional, defaults to SUI)
+ * @param opts Options (for future pagination control)
+ * @returns Reserve configuration with both new and compat fields
  */
-export async function readSuilendReserveConfig(coinType: string = COIN_TYPES.SUI): Promise<SuilendReserveConfig> {
+export async function readSuilendReserveConfig(
+  clientOrCoinType?: SuiClient | string,
+  marketId?: string,
+  coinType?: string,
+  opts?: { maxPages?: number }
+): Promise<ReserveConfig> {
+  // Determine overload: coinType-only vs full params
+  let client: SuiClient;
+  let market: string;
+  let targetCoinType: string;
+  
+  if (typeof clientOrCoinType === 'string' || clientOrCoinType === undefined) {
+    // Overload: readSuilendReserveConfig(coinType?)
+    client = getSuiClient();
+    market = process.env.SUILEND_LENDING_MARKET || SUILEND.lendingMarket;
+    targetCoinType = clientOrCoinType || COIN_TYPES.SUI;
+    logger.debug(`Using convenience overload: market=${market}, coinType=${targetCoinType}`);
+  } else {
+    // Overload: readSuilendReserveConfig(client, marketId, coinType?, opts?)
+    client = clientOrCoinType;
+    market = marketId!;
+    targetCoinType = coinType || COIN_TYPES.SUI;
+    logger.debug(`Using explicit overload: market=${market}, coinType=${targetCoinType}`);
+  }
+  
+  const maxPages = opts?.maxPages || 10;
+
   try {
-    const client = getSuiClient();
+    // Step 1: Fetch lending market object
     const lendingMarket = await client.getObject({
-      id: SUILEND.lendingMarket,
+      id: market,
       options: { showContent: true, showType: true },
     });
 
@@ -37,99 +83,147 @@ export async function readSuilendReserveConfig(coinType: string = COIN_TYPES.SUI
       throw new Error('Invalid lending market object type');
     }
 
-    // Iterate reserves vector (inline Reserve structs in content.fields.reserves)
-    const reserves = content.fields.reserves || [];
-    for (let i = 0; i < reserves.length; i++) {
-      const reserve = reserves[i];
-      
-      // Match reserves[i].fields.coin_type.name === coinType (verified via on-chain inspection)
-      const reserveCoinType = reserve.fields?.coin_type?.name || reserve.fields?.coin_type || reserve.coin_type;
-      
-      if (reserveCoinType === coinType) {
-        // Read from reserves[i].fields.config.fields.borrow_fee_bps (u64 bps)
-        const config = reserve.fields?.config;
-        const borrowFeeBps = BigInt(
-          config?.fields?.borrow_fee_bps || 
-          config?.borrow_fee_bps || 
-          '5'
-        ); // Default 5 bps = 0.05%
-        
-        // Read from reserves[i].fields.available_amount (base units, 9 decimals for SUI)
-        const availableAmount = BigInt(reserve.fields?.available_amount || '0');
-        
-        // Log discovery with detailed info
-        const isSui = coinType === COIN_TYPES.SUI;
-        const humanAmount = isSui 
-          ? smallestUnitToSui(availableAmount) 
-          : smallestUnitToUsdc(availableAmount);
-        const unit = isSui ? 'SUI' : 'USDC';
-        
-        logger.info(`✓ Found Suilend reserve for ${coinType}`);
-        logger.info(`  Reserve index: ${i}`);
-        logger.info(`  Borrow fee: ${borrowFeeBps} bps (${Number(borrowFeeBps) / 100}%)`);
-        logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit}`);
-        
-        return {
-          reserveIndex: i,
-          borrowFeeBps,
-          availableAmount,
-          coinType,
-        };
+    // Step 2: Extract Bag ID from market.content.fields.reserves.fields.id.id
+    const reservesBag = content.fields?.reserves;
+    if (!reservesBag || !reservesBag.fields || !reservesBag.fields.id || !reservesBag.fields.id.id) {
+      throw new Error('Cannot extract Bag ID from lending market reserves field');
+    }
+    
+    const bagId: string = reservesBag.fields.id.id;
+    logger.info(`✓ Discovered Suilend reserves Bag ID: ${bagId}`);
+
+    // Step 3: Paginate through dynamic fields
+    let hasNextPage = true;
+    let cursor: string | null = null;
+    let pageCount = 0;
+    let totalFields = 0;
+
+    while (hasNextPage && pageCount < maxPages) {
+      const dynamicFields = await client.getDynamicFields({
+        parentId: bagId,
+        cursor,
+        limit: 50,
+      });
+
+      totalFields += dynamicFields.data.length;
+      logger.debug(`Page ${pageCount + 1}: Found ${dynamicFields.data.length} dynamic fields`);
+
+      // Step 4: Match reserve by coin type
+      for (const field of dynamicFields.data) {
+        const fieldName = field.name;
+        const reserveKey = typeof fieldName === 'object' && 'value' in fieldName 
+          ? String(fieldName.value) 
+          : String(fieldName);
+
+        // Fetch the dynamic field object to inspect coin_type
+        const fieldObject = await client.getDynamicFieldObject({
+          parentId: bagId,
+          name: field.name,
+        });
+
+        if (!fieldObject.data || !fieldObject.data.content) {
+          logger.debug(`Skipping field ${reserveKey}: no content`);
+          continue;
+        }
+
+        const fieldContent = fieldObject.data.content as any;
+        if (fieldContent.dataType !== 'moveObject') {
+          logger.debug(`Skipping field ${reserveKey}: not a moveObject`);
+          continue;
+        }
+
+        // Check if this reserve matches the target coin type
+        const reserveFields = fieldContent.fields?.value?.fields || fieldContent.fields;
+        const reserveCoinType = reserveFields?.coin_type?.fields?.name 
+          || reserveFields?.coin_type?.name 
+          || reserveFields?.coin_type;
+
+        if (reserveCoinType === targetCoinType) {
+          // Extract config fields
+          const reserveConfig = reserveFields?.config?.fields || reserveFields?.config;
+          const borrowFee = reserveConfig?.borrow_fee 
+            || reserveConfig?.borrow_fee_bps 
+            || reserveConfig?.fee_bps 
+            || '5';
+          const feeBps = Number(borrowFee);
+          
+          const availableAmount = BigInt(reserveFields?.available_amount || '0');
+          
+          // Parse reserveIndex from reserveKey if numeric
+          const parsedIndex = parseInt(reserveKey, 10);
+          const reserveIndex = isNaN(parsedIndex) ? undefined : parsedIndex;
+
+          // Log discovery
+          const isSui = targetCoinType === COIN_TYPES.SUI;
+          const humanAmount = isSui 
+            ? smallestUnitToSui(availableAmount) 
+            : smallestUnitToUsdc(availableAmount);
+          const unit = isSui ? 'SUI' : 'USDC';
+
+          logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
+          logger.info(`  Reserve key: ${reserveKey}`);
+          logger.info(`  Fee: ${feeBps} bps (${feeBps / 100}%)`);
+          logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
+          if (reserveIndex !== undefined) {
+            logger.info(`  Reserve index (parsed): ${reserveIndex}`);
+          }
+
+          return {
+            reserveKey,
+            feeBps,
+            availableAmount,
+            coinType: targetCoinType,
+            // Backward-compatible aliases
+            reserveIndex,
+            borrowFeeBps: feeBps,
+          };
+        }
       }
+
+      hasNextPage = dynamicFields.hasNextPage;
+      cursor = dynamicFields.nextCursor || null;
+      pageCount++;
     }
 
-    // If not found, handle based on mode
-    const errorMsg = `Could not find reserve for coin type ${coinType} in Suilend lending market.`;
+    logger.info(`Searched ${totalFields} dynamic fields across ${pageCount} pages`);
+
+    // Not found - handle based on mode
+    const errorMsg = `Could not find reserve for coin type ${targetCoinType} in Suilend lending market Bag ${bagId}`;
     
     if (config.dryRun) {
-      // In simulation/dry-run mode, allow fallback with clear warning
       logger.warn(errorMsg);
       logger.warn('Using default reserve config for simulation purposes.');
-      logger.warn('In live mode (DRY_RUN=false), this would fail.');
-      logger.warn('To fix: Check SUILEND_LENDING_MARKET is correct and reserve exists.');
       
       return {
+        reserveKey: '0',
+        feeBps: 5,
+        availableAmount: BigInt('1000000000000000'),
+        coinType: targetCoinType,
         reserveIndex: 0,
-        borrowFeeBps: BigInt(5), // 0.05%
-        availableAmount: BigInt('1000000000000000'), // Large default for simulation
-        coinType,
+        borrowFeeBps: 5,
       };
     } else {
-      // In live mode, fail explicitly with guidance
       logger.error(errorMsg);
-      logger.error('Reserve discovery failed. Cannot proceed in live mode.');
-      logger.error('Please verify:');
-      logger.error('  1. SUILEND_LENDING_MARKET is set correctly in .env');
-      logger.error('  2. The lending market contains a reserve for the coin type');
-      logger.error(`  3. Coin type matches exactly: ${coinType}`);
-      throw new Error(
-        `${errorMsg} Cannot proceed in live mode. ` +
-        `Verify SUILEND_LENDING_MARKET and reserve configuration.`
-      );
+      throw new Error(`${errorMsg}. Verify SUILEND_LENDING_MARKET and reserve configuration.`);
     }
-  } catch (error) {
+  } catch (error: any) {
     // For unexpected errors (network, parsing, etc.)
     logger.error('Failed to read Suilend reserve config', error);
     
     if (config.dryRun) {
-      // In simulation, allow fallback but log prominently
       logger.warn('Network or parsing error while reading Suilend reserve.');
       logger.warn('Using default reserve config for simulation purposes.');
-      logger.warn('In live mode (DRY_RUN=false), this would fail.');
       
       return {
+        reserveKey: '0',
+        feeBps: 5,
+        availableAmount: BigInt('1000000000000000'),
+        coinType: targetCoinType,
         reserveIndex: 0,
-        borrowFeeBps: BigInt(5), // 0.05%
-        availableAmount: BigInt('1000000000000000'), // Large default for simulation
-        coinType,
+        borrowFeeBps: 5,
       };
     } else {
-      // In live mode, fail with clear guidance
       logger.error('Cannot read Suilend reserve configuration in live mode.');
-      logger.error('Possible causes:');
-      logger.error('  1. Network connectivity issue');
-      logger.error('  2. RPC endpoint not responding');
-      logger.error('  3. Suilend lending market object changed structure');
       throw error;
     }
   }
@@ -143,7 +237,7 @@ export async function readSuilendReserveConfig(coinType: string = COIN_TYPES.SUI
  */
 export async function discoverSuilendReserveIndex(coinType: string): Promise<number> {
   const config = await readSuilendReserveConfig(coinType);
-  return config.reserveIndex;
+  return config.reserveIndex || 0;
 }
 
 /**
@@ -159,11 +253,23 @@ export async function borrowFromSuilend(
   tx: Transaction,
   amount: bigint,
   coinType: string,
-  reserveConfig?: SuilendReserveConfig
-): Promise<{ borrowedCoins: any; receipt: any; reserveConfig: SuilendReserveConfig }> {
+  reserveConfig?: ReserveConfig | SuilendReserveConfig
+): Promise<{ borrowedCoins: any; receipt: any; reserveConfig: ReserveConfig }> {
   try {
     // Read reserve config if not provided
-    const finalConfig = reserveConfig || await readSuilendReserveConfig(coinType);
+    const rawConfig = reserveConfig || await readSuilendReserveConfig(coinType);
+    
+    // Normalize to ReserveConfig
+    const finalConfig: ReserveConfig = 'reserveKey' in rawConfig 
+      ? rawConfig 
+      : {
+          reserveKey: String(rawConfig.reserveIndex),
+          feeBps: Number(rawConfig.borrowFeeBps),
+          availableAmount: rawConfig.availableAmount,
+          coinType: rawConfig.coinType,
+          reserveIndex: rawConfig.reserveIndex,
+          borrowFeeBps: Number(rawConfig.borrowFeeBps),
+        };
 
     // Enforce capacity limit: principal <= available_amount - SAFETY_BUFFER
     const safetyBuffer = BigInt(config.suilendSafetyBuffer);
@@ -175,22 +281,30 @@ export async function borrowFromSuilend(
     const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
     
     // Compute repay with ceiling division: repay = principal + ceil(principal * fee_bps / 10_000)
-    const repayAmount = computeRepayAmountBase(amount, finalConfig.borrowFeeBps);
+    const feeBpsBigInt = BigInt(finalConfig.feeBps);
+    const repayAmount = computeRepayAmountBase(amount, feeBpsBigInt);
     
     // Log detailed borrow info
     logger.info(`Borrowing from Suilend`);
-    logger.info(`  Reserve index: ${finalConfig.reserveIndex}`);
-    logger.info(`  Fee: ${finalConfig.borrowFeeBps} bps (${Number(finalConfig.borrowFeeBps) / 100}%)`);
+    logger.info(`  Reserve key: ${finalConfig.reserveKey}`);
+    if (finalConfig.reserveIndex !== undefined) {
+      logger.info(`  Reserve index: ${finalConfig.reserveIndex}`);
+    }
+    logger.info(`  Fee: ${finalConfig.feeBps} bps (${finalConfig.feeBps / 100}%)`);
     logger.info(`  Principal: ${toHuman(amount).toFixed(6)} ${unit}`);
     logger.info(`  Repay amount: ${toHuman(repayAmount).toFixed(6)} ${unit}`);
 
     // Suilend flashloan entrypoint per Perplexity spec:
     // lending::flash_borrow(lending_market, reserve_index, amount) -> (Coin<T>, FlashLoanReceipt)
+    const reserveIndexArg = finalConfig.reserveIndex !== undefined 
+      ? finalConfig.reserveIndex 
+      : parseInt(finalConfig.reserveKey, 10) || 0;
+      
     const [borrowedCoins, receipt] = tx.moveCall({
       target: `${SUILEND.packageId}::lending::flash_borrow`,
       arguments: [
         tx.object(SUILEND.lendingMarket),
-        tx.pure.u64(finalConfig.reserveIndex.toString()),
+        tx.pure.u64(reserveIndexArg.toString()),
         tx.pure.u64(amount.toString()),
       ],
       typeArguments: [coinType],
@@ -339,8 +453,8 @@ export async function flashloanWithRetries(
   receipt: any;
   provider: 'suilend' | 'navi';
   feePercent?: number;
-  feeBps?: bigint;
-  reserveConfig?: SuilendReserveConfig;
+  feeBps?: number;
+  reserveConfig?: ReserveConfig;
 }> {
   const maxRetries = config.maxRetries;
   let lastError: Error | null = null;
@@ -355,10 +469,11 @@ export async function flashloanWithRetries(
       }
 
       const result = await borrowFromSuilend(tx, amount, coinType);
+      const feeBps = result.reserveConfig.borrowFeeBps ?? result.reserveConfig.feeBps;
       return {
         ...result,
         provider: 'suilend',
-        feeBps: result.reserveConfig.borrowFeeBps,
+        feeBps,
       };
     } catch (error) {
       lastError = error as Error;
@@ -454,14 +569,14 @@ export function computeRepayAmountBase(principalBase: bigint, feeBps: bigint): b
 
 /**
  * Calculate flashloan repayment amount from fee in basis points
- * @deprecated Use computeRepayAmountBase instead for clarity
+ * Exported for backward compatibility with simulate/executor
  * Uses ceiling division to ensure we repay enough
- * @param borrowAmount Amount borrowed
+ * @param principalBase Amount borrowed in base units
  * @param feeBps Fee in basis points (e.g., 5 for 0.05%)
  * @returns Total amount to repay (principal + fee, rounded up)
  */
-export function calculateRepayAmountFromBps(borrowAmount: bigint, feeBps: bigint): bigint {
-  return computeRepayAmountBase(borrowAmount, feeBps);
+export function calculateRepayAmountFromBps(principalBase: bigint, feeBps: number): bigint {
+  return computeRepayAmountBase(principalBase, BigInt(feeBps));
 }
 
 /**
