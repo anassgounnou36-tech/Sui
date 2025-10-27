@@ -93,14 +93,37 @@ export async function readSuilendReserveConfig(
       // Vector path: reserves is a direct array
       logger.info(`[Suilend] Using vector-based discovery: ${reserves.length} reserves found`);
       
+      // Debug: Log first 2 reserve types to verify parsing
+      if (reserves.length > 0) {
+        logger.debug('[Suilend] DEBUG - First reserve types for verification:');
+        for (let i = 0; i < Math.min(2, reserves.length); i++) {
+          const debugType = reserves[i]?.type || 'no type field';
+          logger.debug(`  Reserve[${i}].type: ${debugType}`);
+        }
+      }
+      
       for (let index = 0; index < reserves.length; index++) {
         const reserve = reserves[index];
         const reserveFields = reserve.fields || reserve;
         
-        // Check coin type
-        const reserveCoinType = reserveFields?.coin_type?.fields?.name 
-          || reserveFields?.coin_type?.name 
-          || reserveFields?.coin_type;
+        // Parse coin type from reserve.type generic parameter
+        // Format: "...::reserve::Reserve<0x2::sui::SUI>"
+        // Extract the generic parameter using regex
+        let reserveCoinType: string | undefined;
+        
+        if (reserve.type && typeof reserve.type === 'string') {
+          const match = reserve.type.match(/::reserve::Reserve<(.+)>$/);
+          if (match && match[1]) {
+            reserveCoinType = match[1];
+          }
+        }
+        
+        // Fallback: Try fields.coin_type paths (for compatibility with older structures)
+        if (!reserveCoinType) {
+          reserveCoinType = reserveFields?.coin_type?.fields?.name 
+            || reserveFields?.coin_type?.name 
+            || reserveFields?.coin_type;
+        }
         
         if (reserveCoinType === targetCoinType) {
           // Extract config fields - fee is at config.fields.borrow_fee (bps)
@@ -119,11 +142,18 @@ export async function readSuilendReserveConfig(
             ? smallestUnitToSui(availableAmount) 
             : smallestUnitToUsdc(availableAmount);
           const unit = isSui ? 'SUI' : 'USDC';
+          
+          // Calculate sample repay for logging (1000 units as sample)
+          const samplePrincipal = isSui ? BigInt(1000000000000) : BigInt(1000000000); // 1000 SUI (9 decimals) or 1000 USDC (6 decimals)
+          const sampleRepay = computeRepayAmountBase(samplePrincipal, BigInt(feeBps));
+          const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
 
           logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
           logger.info(`  Reserve index: ${index}`);
+          logger.info(`  Parsed coin type: ${reserveCoinType}`);
           logger.info(`  Fee (borrow_fee): ${feeBps} bps (${feeBps / 100}%)`);
           logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
+          logger.info(`  Sample repay (for 1000 ${unit} principal): ${toHuman(sampleRepay).toFixed(6)} ${unit}`);
 
           return {
             reserveKey: String(index),
