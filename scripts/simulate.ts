@@ -4,7 +4,7 @@ import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
 import { quoteCetusPoolSwapB2A, quoteCetusPoolSwapA2B } from '../src/cetusIntegration';
 import { SUILEND, CETUS, COIN_TYPES } from '../src/addresses';
 import { calculateMinOut } from '../src/slippage';
-import { readSuilendReserveConfig, computeRepayAmountBase } from '../src/flashloan';
+import { readSuilendReserveConfig, calculateRepayAmountFromBps } from '../src/flashloan';
 
 /**
  * Simulate the complete arbitrage PTB for Cetus fee-tier arbitrage
@@ -47,8 +47,11 @@ async function simulateArbitrage() {
     // Read Suilend reserve config for dynamic fee
     console.log('Reading Suilend reserve configuration...');
     const reserveConfig = await readSuilendReserveConfig(COIN_TYPES.SUI);
-    console.log(`  Reserve Index: ${reserveConfig.reserveIndex}`);
-    console.log(`  Borrow Fee: ${reserveConfig.borrowFeeBps} bps (${Number(reserveConfig.borrowFeeBps) / 100}%)`);
+    console.log(`  Reserve Key: ${reserveConfig.reserveKey}`);
+    if (reserveConfig.reserveIndex !== undefined) {
+      console.log(`  Reserve Index: ${reserveConfig.reserveIndex}`);
+    }
+    console.log(`  Borrow Fee: ${reserveConfig.feeBps} bps (${reserveConfig.feeBps / 100}%)`);
     console.log(`  Available Amount: ${smallestUnitToSui(reserveConfig.availableAmount).toFixed(2)} SUI`);
     console.log();
 
@@ -82,11 +85,12 @@ async function simulateArbitrage() {
     console.log(`  Expected: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI\n`);
 
     // Calculate repay amount using dynamic fee with ceiling division
-    const repayAmount = computeRepayAmountBase(flashloanAmount, reserveConfig.borrowFeeBps);
+    const feeBps = reserveConfig.borrowFeeBps ?? reserveConfig.feeBps;
+    const repayAmount = calculateRepayAmountFromBps(flashloanAmount, feeBps);
     const fee = repayAmount - flashloanAmount;
 
     console.log('=== Fee Calculations ===');
-    console.log(`Flashloan Fee (${reserveConfig.borrowFeeBps} bps / ${Number(reserveConfig.borrowFeeBps) / 100}%): ${smallestUnitToSui(fee).toFixed(6)} SUI`);
+    console.log(`Flashloan Fee (${feeBps} bps / ${feeBps / 100}%): ${smallestUnitToSui(fee).toFixed(6)} SUI`);
     console.log(`Repay Amount: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI\n`);
 
     // Calculate min_out for both swaps

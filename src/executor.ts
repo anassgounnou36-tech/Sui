@@ -219,11 +219,12 @@ export async function executeFlashloanArb(
         const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.SUI, reserveConfig);
         borrowedCoins = suilendResult.borrowedCoins;
         receipt = suilendResult.receipt;
-        reserveIndex = suilendResult.reserveConfig.reserveIndex;
+        reserveIndex = suilendResult.reserveConfig.reserveIndex || 0;
         
         // Recalculate repay amount using dynamic fee
-        repayAmount = calculateRepayAmountFromBps(amount, suilendResult.reserveConfig.borrowFeeBps);
-        logger.info(`Using Suilend flashloan (reserve ${reserveIndex}, fee ${suilendResult.reserveConfig.borrowFeeBps} bps)`);
+        const feeBps = suilendResult.reserveConfig.borrowFeeBps ?? suilendResult.reserveConfig.feeBps;
+        repayAmount = calculateRepayAmountFromBps(amount, feeBps);
+        logger.info(`Using Suilend flashloan (reserve ${reserveIndex}, fee ${feeBps} bps)`);
       } else {
         // For Navi, pool_id for SUI (should be discovered dynamically)
         const poolId = 0;
