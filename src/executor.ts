@@ -2,7 +2,7 @@ import { logger } from './logger';
 import { config, smallestUnitToUsdc } from './config';
 import { COIN_TYPES } from './addresses';
 import { buildTransaction, signAndExecuteTransaction } from './utils/sui';
-import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi } from './flashloan';
+import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi, readSuilendReserveConfig, calculateRepayAmountFromBps } from './flashloan';
 import {
   quoteCetusPoolSwapB2A,
   quoteCetusPoolSwapA2B,
@@ -182,7 +182,8 @@ export async function executeFlashloanArb(
       };
     }
 
-    const { firstSwap, secondSwap, expectedProfit, repayAmount } = validation.quotes!;
+    const { firstSwap, secondSwap, expectedProfit } = validation.quotes!;
+    let repayAmount = validation.quotes!.repayAmount;
 
     logger.success('✓ Opportunity validated, proceeding with execution');
 
@@ -193,16 +194,20 @@ export async function executeFlashloanArb(
     logger.info('Step 1: Borrowing SUI via flashloan');
     let borrowedCoins: any;
     let receipt: any;
+    let reserveIndex = 0;
 
     try {
       if (useSuilend) {
-        // For Suilend, reserve_index for SUI should be discovered dynamically
-        // Typically reserve index 0 is SUI on mainnet
-        const reserveIndex = 0;
-        const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.SUI, reserveIndex);
+        // Read Suilend reserve config for dynamic fee and availability
+        const reserveConfig = await readSuilendReserveConfig(COIN_TYPES.SUI);
+        const suilendResult = await borrowFromSuilend(tx, amount, COIN_TYPES.SUI, reserveConfig);
         borrowedCoins = suilendResult.borrowedCoins;
         receipt = suilendResult.receipt;
-        logger.info(`Using Suilend flashloan (reserve ${reserveIndex})`);
+        reserveIndex = suilendResult.reserveConfig.reserveIndex;
+        
+        // Recalculate repay amount using dynamic fee
+        repayAmount = calculateRepayAmountFromBps(amount, suilendResult.reserveConfig.borrowFeeBps);
+        logger.info(`Using Suilend flashloan (reserve ${reserveIndex}, fee ${suilendResult.reserveConfig.borrowFeeBps} bps)`);
       } else {
         // For Navi, pool_id for SUI (should be discovered dynamically)
         const poolId = 0;

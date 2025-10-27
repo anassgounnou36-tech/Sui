@@ -1,15 +1,25 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { logger } from './logger';
-import { config } from './config';
+import { config, smallestUnitToSui, smallestUnitToUsdc } from './config';
 import { SUILEND, NAVI, COIN_TYPES } from './addresses';
 import { sleep, getSuiClient } from './utils/sui';
 
 /**
- * Discover reserve index for a given coin type in Suilend lending market
- * @param coinType Coin type to find reserve index for
- * @returns Reserve index or throws if not found
+ * Suilend reserve configuration
  */
-export async function discoverSuilendReserveIndex(coinType: string): Promise<number> {
+export interface SuilendReserveConfig {
+  reserveIndex: number;
+  borrowFeeBps: bigint;
+  availableAmount: bigint;
+  coinType: string;
+}
+
+/**
+ * Read Suilend reserve configuration including fee and available borrow amount
+ * @param coinType Coin type to read config for
+ * @returns Reserve configuration with fee_bps and available_amount
+ */
+export async function readSuilendReserveConfig(coinType: string): Promise<SuilendReserveConfig> {
   try {
     const client = getSuiClient();
     const lendingMarket = await client.getObject({
@@ -33,51 +43,107 @@ export async function discoverSuilendReserveIndex(coinType: string): Promise<num
       const reserveCoinType = reserve.fields?.coin_type || reserve.coin_type;
       
       if (reserveCoinType === coinType) {
+        // Extract borrow_fee_bps from config
+        const config = reserve.fields?.config;
+        const borrowFeeBps = BigInt(config?.borrow_fee_bps || config?.fields?.borrow_fee_bps || '5'); // Default 5 bps = 0.05%
+        
+        // Extract available_amount
+        const availableAmount = BigInt(reserve.fields?.available_amount || '0');
+        
         logger.info(`Found Suilend reserve index ${i} for ${coinType}`);
-        return i;
+        logger.info(`  Borrow fee: ${borrowFeeBps} bps (${Number(borrowFeeBps) / 100}%)`);
+        
+        // Log in human units
+        const isSui = coinType === COIN_TYPES.SUI;
+        const humanAmount = isSui 
+          ? smallestUnitToSui(availableAmount) 
+          : smallestUnitToUsdc(availableAmount);
+        const unit = isSui ? 'SUI' : 'USDC';
+        logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit} (${availableAmount} base units)`);
+        
+        return {
+          reserveIndex: i,
+          borrowFeeBps,
+          availableAmount,
+          coinType,
+        };
       }
     }
 
     // Default fallback based on common knowledge
     if (coinType === COIN_TYPES.SUI) {
-      logger.warn('Could not find SUI reserve dynamically, using default index 0');
-      return 0;
-    } else if (coinType === COIN_TYPES.USDC) {
-      logger.warn('Could not find USDC reserve dynamically, using default index 0');
-      return 0;
+      logger.warn('Could not find SUI reserve dynamically, using defaults');
+      return {
+        reserveIndex: 0,
+        borrowFeeBps: BigInt(5), // 0.05%
+        availableAmount: BigInt('1000000000000000'), // Large default
+        coinType,
+      };
     }
 
     throw new Error(`No reserve found for coin type ${coinType} in Suilend`);
   } catch (error) {
-    logger.error('Failed to discover Suilend reserve index', error);
-    // Return default 0 as fallback
-    logger.warn('Using default reserve index 0 as fallback');
-    return 0;
+    logger.error('Failed to read Suilend reserve config', error);
+    // Return safe defaults
+    logger.warn('Using default reserve config as fallback');
+    return {
+      reserveIndex: 0,
+      borrowFeeBps: BigInt(5), // 0.05%
+      availableAmount: BigInt('1000000000000000'), // Large default
+      coinType,
+    };
   }
 }
 
 /**
- * Borrow coins from Suilend flashloan
+ * Discover reserve index for a given coin type in Suilend lending market
+ * @deprecated Use readSuilendReserveConfig instead
+ * @param coinType Coin type to find reserve index for
+ * @returns Reserve index or throws if not found
+ */
+export async function discoverSuilendReserveIndex(coinType: string): Promise<number> {
+  const config = await readSuilendReserveConfig(coinType);
+  return config.reserveIndex;
+}
+
+/**
+ * Borrow coins from Suilend flashloan with dynamic fee and availability checks
  * Per Perplexity spec: {SUILEND_CORE}::lending::flash_borrow(lending_market, reserve_index, amount u64) -> (Coin<T>, FlashLoanReceipt)
  * @param tx Transaction to add borrow to
  * @param amount Amount to borrow (in smallest units)
  * @param coinType Type of coin to borrow
- * @param reserveIndex Reserve index for the coin (dynamically discovered if not provided)
- * @returns [borrowedCoins, receipt] to be used for repayment
+ * @param reserveConfig Reserve configuration (if not provided, will be read dynamically)
+ * @returns [borrowedCoins, receipt, reserveConfig] to be used for repayment
  */
 export async function borrowFromSuilend(
   tx: Transaction,
   amount: bigint,
   coinType: string,
-  reserveIndex?: number
-): Promise<{ borrowedCoins: any; receipt: any }> {
+  reserveConfig?: SuilendReserveConfig
+): Promise<{ borrowedCoins: any; receipt: any; reserveConfig: SuilendReserveConfig }> {
   try {
-    // Discover reserve index if not provided
-    const finalReserveIndex = reserveIndex !== undefined 
-      ? reserveIndex 
-      : await discoverSuilendReserveIndex(coinType);
+    // Read reserve config if not provided
+    const finalConfig = reserveConfig || await readSuilendReserveConfig(coinType);
 
-    logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${finalReserveIndex})`);
+    // Check available amount with safety buffer
+    const safetyBuffer = BigInt(config.suilendSafetyBuffer);
+    const maxBorrow = finalConfig.availableAmount - safetyBuffer;
+    
+    if (amount > maxBorrow) {
+      const isSui = coinType === COIN_TYPES.SUI;
+      const requestedHuman = isSui ? smallestUnitToSui(amount) : smallestUnitToUsdc(amount);
+      const availableHuman = isSui ? smallestUnitToSui(maxBorrow) : smallestUnitToUsdc(maxBorrow);
+      const unit = isSui ? 'SUI' : 'USDC';
+      
+      throw new Error(
+        `Insufficient Suilend reserve capacity: ` +
+        `Requested ${requestedHuman.toFixed(2)} ${unit}, ` +
+        `Available ${availableHuman.toFixed(2)} ${unit} (after ${config.suilendSafetyBuffer} buffer)`
+      );
+    }
+
+    logger.info(`Borrowing ${amount} of ${coinType} from Suilend (reserve ${finalConfig.reserveIndex})`);
+    logger.info(`  Fee: ${finalConfig.borrowFeeBps} bps (${Number(finalConfig.borrowFeeBps) / 100}%)`);
 
     // Suilend flashloan entrypoint per Perplexity spec:
     // lending::flash_borrow(lending_market, reserve_index, amount) -> (Coin<T>, FlashLoanReceipt)
@@ -85,7 +151,7 @@ export async function borrowFromSuilend(
       target: `${SUILEND.packageId}::lending::flash_borrow`,
       arguments: [
         tx.object(SUILEND.lendingMarket),
-        tx.pure.u64(finalReserveIndex.toString()),
+        tx.pure.u64(finalConfig.reserveIndex.toString()),
         tx.pure.u64(amount.toString()),
       ],
       typeArguments: [coinType],
@@ -93,7 +159,7 @@ export async function borrowFromSuilend(
 
     logger.debug('Suilend flash_borrow transaction added to PTB');
 
-    return { borrowedCoins, receipt };
+    return { borrowedCoins, receipt, reserveConfig: finalConfig };
   } catch (error) {
     logger.error('Failed to create Suilend borrow transaction', error);
     throw error;
@@ -223,7 +289,7 @@ export function repayToNavi(
  * @param tx Transaction to add flashloan to
  * @param amount Amount to borrow
  * @param coinType Coin type to borrow
- * @returns Borrow result with provider info
+ * @returns Borrow result with provider info and reserve config
  */
 export async function flashloanWithRetries(
   tx: Transaction,
@@ -233,7 +299,9 @@ export async function flashloanWithRetries(
   borrowedCoins: any;
   receipt: any;
   provider: 'suilend' | 'navi';
-  feePercent: number;
+  feePercent?: number;
+  feeBps?: bigint;
+  reserveConfig?: SuilendReserveConfig;
 }> {
   const maxRetries = config.maxRetries;
   let lastError: Error | null = null;
@@ -251,7 +319,7 @@ export async function flashloanWithRetries(
       return {
         ...result,
         provider: 'suilend',
-        feePercent: config.suilendFeePercent,
+        feeBps: result.reserveConfig.borrowFeeBps,
       };
     } catch (error) {
       lastError = error as Error;
@@ -286,6 +354,21 @@ export async function flashloanWithRetries(
   throw new Error(
     `Flashloan failed from both Suilend and Navi: ${lastError?.message || 'Unknown error'}`
   );
+}
+
+/**
+ * Calculate flashloan repayment amount from fee in basis points
+ * Uses ceiling division to ensure we repay enough
+ * @param borrowAmount Amount borrowed
+ * @param feeBps Fee in basis points (e.g., 5 for 0.05%)
+ * @returns Total amount to repay (principal + fee, rounded up)
+ */
+export function calculateRepayAmountFromBps(borrowAmount: bigint, feeBps: bigint): bigint {
+  // Calculate fee with ceiling: fee = ceil(principal * feeBps / 10_000)
+  // Using formula: ceil(a/b) = (a + b - 1) / b
+  const denominator = BigInt(10000);
+  const fee = (borrowAmount * feeBps + denominator - BigInt(1)) / denominator;
+  return borrowAmount + fee;
 }
 
 /**

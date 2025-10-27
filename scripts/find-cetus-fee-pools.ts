@@ -206,7 +206,6 @@ async function main() {
     // Output recommended .env configuration
     logger.info('=== Recommended .env Configuration ===');
     logger.info('Add these lines to your .env file:\n');
-    logger.info('MODE=CETUS_FEE_TIER_ARB');
     logger.info('FLASHLOAN_ASSET=SUI');
     
     pools.forEach((pool) => {

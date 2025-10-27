@@ -50,8 +50,11 @@ export const SUILEND = {
   ),
   // Market object ID - to be resolved dynamically at startup
   marketObjectId: getAddress('SUILEND_MARKET_ID', ''),
-  // Suilend lending market for flashloans - to be resolved dynamically
-  lendingMarket: getAddress('SUILEND_LENDING_MARKET', ''),
+  // Suilend lending market for flashloans - mainnet default
+  lendingMarket: getAddress(
+    'SUILEND_LENDING_MARKET',
+    '0x84030d26d85eaa7035084a057f2f11f701b7e2e4eda87551becbc7c97505ece1'
+  ),
 };
 
 // Navi Protocol Configuration (Fallback)

@@ -9,6 +9,8 @@ let suiClient: SuiClient | null = null;
 let keypair: Ed25519Keypair | null = null;
 let currentRpcUrl: string = '';
 let rpcEndpoints: string[] = [];
+let requestCounter: number = 0;
+let currentRpcIndex: number = 0;
 
 /**
  * Initialize the Sui RPC client with failover support
@@ -37,6 +39,7 @@ export function initializeRpcClient(
       try {
         suiClient = new SuiClient({ url });
         currentRpcUrl = url;
+        currentRpcIndex = 0;
         logger.info(`Initialized Sui RPC client: ${url}`);
         connected = true;
         break;
@@ -50,6 +53,27 @@ export function initializeRpcClient(
     }
   }
   return suiClient;
+}
+
+/**
+ * Rotate to the next RPC endpoint (round-robin)
+ */
+function rotateRpc(): void {
+  if (rpcEndpoints.length <= 1) {
+    return; // No rotation needed if only one endpoint
+  }
+
+  const nextIndex = (currentRpcIndex + 1) % rpcEndpoints.length;
+  const nextUrl = rpcEndpoints[nextIndex];
+
+  try {
+    suiClient = new SuiClient({ url: nextUrl });
+    currentRpcUrl = nextUrl;
+    currentRpcIndex = nextIndex;
+    logger.info(`Rotated to RPC endpoint: ${nextUrl}`);
+  } catch (error) {
+    logger.error(`Failed to rotate to ${nextUrl}, keeping current`, error);
+  }
 }
 
 /**
@@ -70,6 +94,7 @@ async function failoverRpc(): Promise<SuiClient> {
     const newClient = new SuiClient({ url: nextUrl });
     suiClient = newClient;
     currentRpcUrl = nextUrl;
+    currentRpcIndex = nextIndex;
     logger.info(`Successfully connected to backup RPC: ${nextUrl}`);
     return newClient;
   } catch (error) {
@@ -80,10 +105,18 @@ async function failoverRpc(): Promise<SuiClient> {
 
 /**
  * Get the initialized Sui client (throws if not initialized)
+ * Automatically rotates RPC endpoints after configured number of requests
  */
 export function getSuiClient(): SuiClient {
   if (!suiClient) {
     throw new Error('Sui client not initialized. Call initializeRpcClient first.');
+  }
+
+  // Increment request counter and check for rotation
+  requestCounter++;
+  if (requestCounter >= config.rotateAfterRequests) {
+    rotateRpc();
+    requestCounter = 0;
   }
   return suiClient;
 }
