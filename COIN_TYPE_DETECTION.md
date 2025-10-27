@@ -79,12 +79,14 @@ All existing exports and function signatures remain unchanged:
 
 **test-coin-type-extraction.ts** - 8 tests covering all 4 strategies:
 ```bash
-npm run build && node dist/scripts/test-coin-type-extraction.js
+npm run build
+node dist/scripts/test-coin-type-extraction.js
 ```
 
 **test-diagnostics.ts** - validates diagnostic output format:
 ```bash
-npm run build && node dist/scripts/test-diagnostics.js
+npm run build
+node dist/scripts/test-diagnostics.js
 ```
 
 ### Integration Testing
