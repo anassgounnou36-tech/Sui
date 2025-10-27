@@ -83,16 +83,110 @@ export async function readSuilendReserveConfig(
       throw new Error('Invalid lending market object type');
     }
 
-    // Step 2: Extract Bag ID from market reserves container (defensive extraction)
+    // Log content.fields keys once for visibility
+    logger.info('[Suilend] Market object fields: ' + Object.keys(content.fields || {}).join(', '));
+
+    // Step 2: Try vector-based discovery first (mainnet uses direct vector)
+    const reserves = content.fields?.reserves;
+    
+    if (Array.isArray(reserves)) {
+      // Vector path: reserves is a direct array
+      logger.info(`[Suilend] Using vector-based discovery: ${reserves.length} reserves found`);
+      
+      for (let index = 0; index < reserves.length; index++) {
+        const reserve = reserves[index];
+        const reserveFields = reserve.fields || reserve;
+        
+        // Check coin type
+        const reserveCoinType = reserveFields?.coin_type?.fields?.name 
+          || reserveFields?.coin_type?.name 
+          || reserveFields?.coin_type;
+        
+        if (reserveCoinType === targetCoinType) {
+          // Extract config fields - fee is at config.fields.borrow_fee (bps)
+          const reserveConfig = reserveFields?.config?.fields || reserveFields?.config;
+          const borrowFee = reserveConfig?.borrow_fee 
+            || reserveConfig?.borrow_fee_bps 
+            || reserveConfig?.fee_bps 
+            || '5';
+          const feeBps = Number(borrowFee);
+          
+          const availableAmount = BigInt(reserveFields?.available_amount || '0');
+          
+          // Log discovery
+          const isSui = targetCoinType === COIN_TYPES.SUI;
+          const humanAmount = isSui 
+            ? smallestUnitToSui(availableAmount) 
+            : smallestUnitToUsdc(availableAmount);
+          const unit = isSui ? 'SUI' : 'USDC';
+
+          logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
+          logger.info(`  Reserve index: ${index}`);
+          logger.info(`  Fee (borrow_fee): ${feeBps} bps (${feeBps / 100}%)`);
+          logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
+
+          return {
+            reserveKey: String(index),
+            feeBps,
+            availableAmount,
+            coinType: targetCoinType,
+            // Backward-compatible aliases
+            reserveIndex: index,
+            borrowFeeBps: feeBps,
+          };
+        }
+      }
+      
+      // Not found in vector
+      const errorMsg = `Could not find reserve for coin type ${targetCoinType} in Suilend reserves vector (searched ${reserves.length} reserves)`;
+      
+      if (config.dryRun) {
+        logger.warn(errorMsg);
+        logger.warn('Using default reserve config for simulation purposes.');
+        
+        return {
+          reserveKey: '0',
+          feeBps: 5,
+          availableAmount: BigInt('1000000000000000'),
+          coinType: targetCoinType,
+          reserveIndex: 0,
+          borrowFeeBps: 5,
+        };
+      } else {
+        logger.error(errorMsg);
+        throw new Error(`${errorMsg}. Verify SUILEND_LENDING_MARKET and reserve configuration.`);
+      }
+    }
+    
+    // Step 3: Fallback to Bag/Table-based discovery (for non-vector environments)
+    logger.info('[Suilend] Vector path not available, attempting Bag/Table fallback...');
+    
     // Support multiple container names: reserves, reserves_bag, reservesBag
     const reservesBag = content.fields?.reserves 
       || content.fields?.reserves_bag 
       || content.fields?.reservesBag;
     
-    if (!reservesBag) {
+    if (!reservesBag || Array.isArray(reservesBag)) {
+      // Already handled array case above, so this means no Bag either
+      const errorMsg = 'Cannot find reserves container in lending market (neither vector nor Bag)';
       logger.debug('[Suilend] DEBUG: content.fields structure:');
       logger.debug(JSON.stringify(content.fields, null, 2));
-      throw new Error('Cannot extract Bag ID from lending market reserves field: reserves container not found');
+      
+      if (config.dryRun) {
+        logger.warn(errorMsg);
+        logger.warn('Using default reserve config for simulation purposes.');
+        
+        return {
+          reserveKey: '0',
+          feeBps: 5,
+          availableAmount: BigInt('1000000000000000'),
+          coinType: targetCoinType,
+          reserveIndex: 0,
+          borrowFeeBps: 5,
+        };
+      } else {
+        throw new Error(errorMsg);
+      }
     }
     
     // Extract bagId defensively from multiple possible patterns
@@ -108,12 +202,25 @@ export async function readSuilendReserveConfig(
     if (!bagId || typeof bagId !== 'string') {
       logger.debug('[Suilend] DEBUG: reservesBag.fields structure:');
       logger.debug(JSON.stringify(reservesBag.fields, null, 2));
-      throw new Error('Cannot extract Bag ID from lending market reserves field: ID not found in expected locations');
+      
+      if (config.dryRun) {
+        logger.warn('Cannot extract Bag ID from reserves field, using defaults for simulation');
+        return {
+          reserveKey: '0',
+          feeBps: 5,
+          availableAmount: BigInt('1000000000000000'),
+          coinType: targetCoinType,
+          reserveIndex: 0,
+          borrowFeeBps: 5,
+        };
+      } else {
+        throw new Error('Cannot extract Bag ID from lending market reserves field: ID not found in expected locations');
+      }
     }
     
-    logger.info(`[Suilend] Reserves Bag ID: ${bagId}`);
+    logger.info(`[Suilend] Using Bag/Table fallback - Reserves Bag ID: ${bagId}`);
 
-    // Step 3: Paginate through dynamic fields
+    // Step 4: Paginate through dynamic fields (Bag fallback)
     let hasNextPage = true;
     let cursor: string | null = null;
     let pageCount = 0;
@@ -127,9 +234,9 @@ export async function readSuilendReserveConfig(
       });
 
       totalFields += dynamicFields.data.length;
-      logger.debug(`Page ${pageCount + 1}: Found ${dynamicFields.data.length} dynamic fields`);
+      logger.debug(`[Bag fallback] Page ${pageCount + 1}: Found ${dynamicFields.data.length} dynamic fields`);
 
-      // Step 4: Match reserve by coin type
+      // Step 5: Match reserve by coin type (Bag fallback)
       for (const field of dynamicFields.data) {
         const fieldName = field.name;
         const reserveKey = typeof fieldName === 'object' && 'value' in fieldName 
@@ -181,7 +288,7 @@ export async function readSuilendReserveConfig(
             : smallestUnitToUsdc(availableAmount);
           const unit = isSui ? 'SUI' : 'USDC';
 
-          logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
+          logger.info(`✓ Found Suilend reserve for ${targetCoinType} (Bag fallback)`);
           logger.info(`  Reserve key: ${reserveKey}`);
           logger.info(`  Fee: ${feeBps} bps (${feeBps / 100}%)`);
           logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
@@ -206,7 +313,7 @@ export async function readSuilendReserveConfig(
       pageCount++;
     }
 
-    logger.info(`Searched ${totalFields} dynamic fields across ${pageCount} pages`);
+    logger.info(`[Bag fallback] Searched ${totalFields} dynamic fields across ${pageCount} pages`);
 
     // Not found - handle based on mode
     const errorMsg = `Could not find reserve for coin type ${targetCoinType} in Suilend lending market Bag ${bagId}`;
