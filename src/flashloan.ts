@@ -132,8 +132,14 @@ export async function readSuilendReserveConfig(
         const unit = isSui ? 'SUI' : 'USDC';
         logger.info(`  Available amount: ${humanAmount.toFixed(2)} ${unit}`);
         
+        // Convert reserveKey to number (should be numeric for Suilend reserves)
+        const reserveIndexNum = Number(reserveKey);
+        if (isNaN(reserveIndexNum)) {
+          logger.warn(`Reserve key '${reserveKey}' is not numeric, using as-is (may cause issues)`);
+        }
+        
         return {
-          reserveIndex: Number(reserveKey), // Use reserveKey as index
+          reserveIndex: isNaN(reserveIndexNum) ? 0 : reserveIndexNum, // Fallback to 0 if not numeric
           borrowFeeBps,
           availableAmount,
           coinType: targetCoinType,
