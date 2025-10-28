@@ -13,16 +13,21 @@ export type TriggerCallback = () => Promise<void>;
 const WS_CLOSE_NORMAL = 1000; // Normal closure
 const WS_CLOSE_UNSUPPORTED = 4000; // Unsupported data or protocol
 
+// USDC token configuration
+const USDC_DECIMALS = 6;
+const USDC_DECIMALS_DIVISOR = Math.pow(10, USDC_DECIMALS);
+
 /**
  * Extract swap amount in USD from event data
- * Assumes USDC decimals (6) for amount_in field
+ * Note: This specifically assumes USDC (6 decimals) for the amount_in field
+ * @param eventData The parsed event data
+ * @returns The swap amount in USD, or null if not available
  */
 function extractSwapAmountUsd(eventData: any): number | null {
   if (!eventData || !eventData.amount_in) {
     return null;
   }
-  // USDC has 6 decimals
-  return parseFloat(eventData.amount_in) / 1_000_000;
+  return parseFloat(eventData.amount_in) / USDC_DECIMALS_DIVISOR;
 }
 
 /**
