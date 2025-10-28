@@ -103,16 +103,24 @@ async function simulateArbitrage() {
 
     // Check profitability
     const estimatedProfit = secondSwapQuote.amountOut - repayAmount;
+    const estimatedProfitSui = smallestUnitToSui(estimatedProfit);
     const isProfitable = estimatedProfit > BigInt(0);
+
+    // Estimate USD profit (using average of pool prices as SUI/USDC rate)
+    const avgPrice = (smallestUnitToUsdc(quote005B2A.amountOut) + smallestUnitToUsdc(quote025B2A.amountOut)) / (2 * flashloanSui);
+    const estimatedProfitUsd = estimatedProfitSui * avgPrice;
 
     console.log('=== Profitability Check ===');
     console.log(`Expected Output: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI`);
     console.log(`Repay Amount: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI`);
-    console.log(`Estimated Profit: ${smallestUnitToSui(estimatedProfit).toFixed(6)} SUI`);
-    console.log(`Status: ${isProfitable ? '✓ PROFITABLE' : '✗ NOT PROFITABLE'}\n`);
+    console.log(`Estimated Profit: ${estimatedProfitSui.toFixed(6)} SUI (~$${estimatedProfitUsd.toFixed(6)} USD)`);
+    console.log(`MIN_PROFIT_USD Gate: ${config.minProfitUsd} USD`);
+    console.log(`Status: ${isProfitable && estimatedProfitUsd >= config.minProfitUsd ? '✓ PROFITABLE' : '✗ NOT PROFITABLE'}\n`);
 
     if (!isProfitable) {
       console.log('⚠️  Simulation shows no profit. Would not execute in production.\n');
+    } else if (estimatedProfitUsd < config.minProfitUsd) {
+      console.log(`⚠️  Profit below MIN_PROFIT_USD threshold (${estimatedProfitUsd.toFixed(6)} < ${config.minProfitUsd}). Would skip in production.\n`);
     }
 
     // Build the PTB structure description

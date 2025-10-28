@@ -130,6 +130,11 @@ MAX_SLIPPAGE_PERCENT=1.0   # Max 1% slippage (hard cap)
 ### Advanced Configuration
 
 ```env
+# Profit Thresholds
+MIN_PROFIT_USD=0.1              # Minimum profit in USD to execute trade (canonical)
+                                # Deprecated aliases: MIN_PROFIT_USDC, MIN_PROFIT
+                                # Use MIN_PROFIT_USD for clarity
+
 # Safety
 LIVE_CONFIRM=false              # MUST be true for amounts >100k USDC
 MAX_CONSECUTIVE_FAILURES=3      # Kill switch threshold
@@ -157,30 +162,59 @@ VERIFY_ON_CHAIN=true            # Verify pool IDs at startup (recommended)
 # Dry Run
 DRY_RUN=false                   # Set to true for simulation mode
 
+# WebSocket Triggers (optional)
+ENABLE_WS=false                 # Enable WebSocket-based triggers for faster reaction
+WS_TRIGGER_MODE=object          # Mode: 'object' (pool changes) or 'event' (swap events)
+MIN_SWAP_USD=0                  # Minimum swap size in USD to trigger (event mode only, 0 disables)
+
 # Telegram Notifications (optional)
+ENABLE_TELEGRAM=false           # Set to true to enable Telegram notifications
 TELEGRAM_BOT_TOKEN=             # Get from @BotFather on Telegram
 TELEGRAM_CHAT_ID=               # Get by messaging your bot and visiting:
                                 # https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 ```
 
+### WebSocket Triggers
+
+The bot supports optional WebSocket subscriptions to react faster to pool changes or swap events.
+
+**Configuration:**
+- `ENABLE_WS=true` - Enable WebSocket triggers
+- `WS_TRIGGER_MODE=object` - Subscribe to pool object changes (any change triggers re-evaluation)
+- `WS_TRIGGER_MODE=event` - Subscribe to swap events (filters by MIN_SWAP_USD if set)
+- `MIN_SWAP_USD=100` - Only trigger on swaps >= $100 (event mode only, 0 disables)
+
+**Modes:**
+- **object**: Subscribes to changes in both Cetus pool objects. Triggers immediate re-evaluation on any pool state change.
+- **event**: Subscribes to Cetus swap events. Optionally filters by swap size using MIN_SWAP_USD to reduce noise.
+
+**Notes:**
+- WebSocket triggers complement the regular polling interval (CHECK_INTERVAL_MS)
+- When disabled, the bot only checks prices at CHECK_INTERVAL_MS intervals
+- When enabled, provides near-instant reaction to pool changes/swaps
+
 ### Telegram Notifications
 
 The bot supports optional Telegram notifications to alert you of arbitrage opportunities and execution results.
+
+**Configuration:**
+- `ENABLE_TELEGRAM=true` - Enable Telegram notifications
+- `TELEGRAM_BOT_TOKEN` - Your bot token from @BotFather
+- `TELEGRAM_CHAT_ID` - Your chat ID from the getUpdates endpoint
 
 **Setup:**
 1. Create a Telegram bot by messaging [@BotFather](https://t.me/BotFather)
 2. Send `/newbot` and follow the instructions to get your `TELEGRAM_BOT_TOKEN`
 3. Start a chat with your bot and send any message
 4. Visit `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` to find your `TELEGRAM_CHAT_ID`
-5. Add both values to your `.env` file
+5. Add both values to your `.env` file and set `ENABLE_TELEGRAM=true`
 
 **Notifications:**
 - **Opportunity Detected**: When spread >= MIN_SPREAD_PERCENT (includes prices, spread %, direction, and pool IDs)
-- **Execution Start**: Before building/submitting the transaction (includes flashloan amount, expected profit)
-- **Execution Result**: After success/failure with transaction digest (live mode only) or error message
+- **Execution Start**: Before building/submitting the transaction (includes flashloan amount, expected profit in SUI and USD)
+- **Execution Result**: After success/failure with transaction digest (live mode) or error message
 
-If either `TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` is missing, notifications are gracefully disabled with a single log message at startup.
-```
+If `ENABLE_TELEGRAM=false` or credentials are missing, notifications are gracefully disabled with a single log message at startup.
 
 ### Coin Types and Package IDs
 
