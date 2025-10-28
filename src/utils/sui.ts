@@ -310,6 +310,7 @@ export async function getCoinBalance(address: string, coinType: string): Promise
 
 /**
  * Get all coin balances for an address
+ * Falls back to getting just SUI balance if getAllBalances fails
  */
 export async function getAllBalances(address: string): Promise<Map<string, bigint>> {
   const client = getSuiClient();
@@ -324,7 +325,18 @@ export async function getAllBalances(address: string): Promise<Map<string, bigin
       balances.set(balance.coinType, BigInt(balance.totalBalance));
     }
   } catch (error) {
-    logger.error('Failed to get all balances', error);
+    logger.error('Failed to get all balances, falling back to SUI balance only', error);
+    
+    // Fallback: just get SUI balance for gas checks
+    try {
+      const suiBalance = await client.getBalance({
+        owner: address,
+        coinType: '0x2::sui::SUI',
+      });
+      balances.set('0x2::sui::SUI', BigInt(suiBalance.totalBalance));
+    } catch (fallbackError) {
+      logger.error('Failed to get SUI balance fallback', fallbackError);
+    }
   }
 
   return balances;
