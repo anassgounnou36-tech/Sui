@@ -24,6 +24,7 @@ export interface ArbResult {
   txDigest?: string;
   error?: string;
   expectedProfit?: bigint;
+  expectedProfitUsd?: number; // USD profit estimate
 }
 
 export type NotifyExecutionStartFn = (

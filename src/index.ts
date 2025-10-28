@@ -1,4 +1,4 @@
-import { config, validateConfig, smallestUnitToUsdc, smallestUnitToSui, usdcToSmallestUnit } from './config';
+import { config, validateConfig, smallestUnitToUsdc, smallestUnitToSui } from './config';
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
 import { runStartupVerification } from './verify';
@@ -7,6 +7,7 @@ import { getCetusPriceByPool } from './cetusIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';
 import { COIN_TYPES } from './addresses';
 import { initializeTelegramNotifier, TelegramNotifier } from './notify/telegram';
+import { initializeWebSocketTriggers, WebSocketTriggerManager } from './ws/triggers';
 
 // State tracking
 let lastExecutionTime = 0;
@@ -18,6 +19,7 @@ let totalExecutions = 0;
 let successfulExecutions = 0;
 let consecutiveFailures = 0; // Kill switch counter
 let telegramNotifier: TelegramNotifier;
+let wsManager: WebSocketTriggerManager;
 
 /**
  * Calculate spread percentage between two prices
@@ -163,7 +165,16 @@ async function feeTierMonitoringLoop() {
     // Execute arbitrage
     logger.info(`=== EXECUTING FEE-TIER ARBITRAGE: ${direction} ===`);
     const flashloanAmount = BigInt(config.flashloanAmount);
-    const minProfit = usdcToSmallestUnit(config.minProfitUsdc);
+    
+    // Calculate expected profit in USD for gating
+    // Use average pool price as SUI/USD rate
+    const avgPriceUsdcPerSui = (price005 + price025) / 2;
+    
+    // For now, we'll validate inside executeFlashloanArb
+    // But we need to convert minProfit to SUI units for the function call
+    // The minProfit param is used as a PTB parameter, so we keep it in SUI smallest units
+    const minProfitSui = config.minProfitUsd / avgPriceUsdcPerSui; // SUI amount
+    const minProfit = BigInt(Math.floor(minProfitSui * 10 ** 9)); // Convert to smallest units
 
     pendingTransactions++;
     lastExecutionTime = Date.now();
@@ -175,6 +186,20 @@ async function feeTierMonitoringLoop() {
       minProfit,
       // Notification callback: called after validation passes, before PTB building
       async (dir, amount, minProf, expectedProfit, isDryRun) => {
+        // Calculate expected profit in USD
+        const expectedProfitSui = smallestUnitToSui(expectedProfit);
+        const expectedProfitUsd = expectedProfitSui * avgPriceUsdcPerSui;
+        
+        // Log USD profit
+        logger.info(`Expected profit: ${expectedProfitSui.toFixed(6)} SUI (~$${expectedProfitUsd.toFixed(6)} USD)`);
+        logger.info(`MIN_PROFIT_USD gate: $${config.minProfitUsd}`);
+        
+        // Check USD gate
+        if (expectedProfitUsd < config.minProfitUsd) {
+          logger.warn(`Expected profit ($${expectedProfitUsd.toFixed(6)}) below MIN_PROFIT_USD ($${config.minProfitUsd}), skipping execution`);
+          throw new Error(`Profit below MIN_PROFIT_USD threshold: $${expectedProfitUsd.toFixed(6)} < $${config.minProfitUsd}`);
+        }
+        
         try {
           await telegramNotifier.notifyExecutionStart(dir, amount, minProf, expectedProfit, isDryRun);
         } catch (error) {
@@ -359,10 +384,24 @@ async function main() {
     logger.info(`  Strategy: Cetus fee-tier arbitrage`);
     logger.info(`  Flashloan asset: ${config.flashloanAsset}`);
     logger.info(`  Flashloan amount: ${config.flashloanAsset === 'SUI' ? smallestUnitToSui(BigInt(config.flashloanAmount)) + ' SUI' : smallestUnitToUsdc(BigInt(config.flashloanAmount)) + ' USDC'}`);
-    logger.info(`  Min profit: ${config.minProfitUsdc} USDC`);
+    logger.info(`  Min profit: ${config.minProfitUsd} USD`);
     logger.info(`  Min spread: ${config.minSpreadPercent}%`);
     logger.info(`  Max slippage: ${config.maxSlippagePercent}%`);
     logger.info(`  Check interval: ${config.checkIntervalMs}ms`);
+    logger.info(`  WebSocket triggers: ${config.enableWs ? `enabled (${config.wsTriggerMode} mode)` : 'disabled'}`);
+    logger.info(`  Telegram notifications: ${config.enableTelegram ? 'enabled' : 'disabled'}`);
+
+    // Initialize WebSocket triggers
+    wsManager = initializeWebSocketTriggers(client);
+    if (config.enableWs) {
+      wsManager.onTrigger(() => {
+        logger.debug('WebSocket trigger fired, running immediate check');
+        feeTierMonitoringLoop().catch((error) => {
+          logger.error('Error in WebSocket-triggered monitoring loop', error);
+        });
+      });
+      await wsManager.start();
+    }
 
     // Start Cetus fee-tier monitoring loop
     logger.info(`Starting monitoring loop (Cetus Fee-Tier Arbitrage)...`);
@@ -379,6 +418,9 @@ async function main() {
     // Keep process alive
     process.on('SIGINT', async () => {
       logger.info('Received SIGINT, shutting down gracefully...');
+      if (config.enableWs) {
+        await wsManager.stop();
+      }
       logger.info(
         `Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`
       );
@@ -387,6 +429,9 @@ async function main() {
 
     process.on('SIGTERM', async () => {
       logger.info('Received SIGTERM, shutting down gracefully...');
+      if (config.enableWs) {
+        await wsManager.stop();
+      }
       logger.info(
         `Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`
       );

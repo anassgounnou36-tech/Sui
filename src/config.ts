@@ -30,6 +30,38 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
   return value.toLowerCase() === 'true';
 }
 
+/**
+ * Get MIN_PROFIT_USD with fallback to deprecated names
+ * Warns once if using deprecated keys
+ */
+let minProfitWarningShown = false;
+function getMinProfitUsd(): number {
+  // Try canonical name first
+  if (process.env.MIN_PROFIT_USD) {
+    return getEnvNumber('MIN_PROFIT_USD', 0.1);
+  }
+  
+  // Fallback to deprecated names with warning
+  if (process.env.MIN_PROFIT_USDC) {
+    if (!minProfitWarningShown) {
+      console.warn('⚠️  WARNING: MIN_PROFIT_USDC is deprecated. Please use MIN_PROFIT_USD instead.');
+      minProfitWarningShown = true;
+    }
+    return getEnvNumber('MIN_PROFIT_USDC', 0.1);
+  }
+  
+  if (process.env.MIN_PROFIT) {
+    if (!minProfitWarningShown) {
+      console.warn('⚠️  WARNING: MIN_PROFIT is deprecated. Please use MIN_PROFIT_USD instead.');
+      minProfitWarningShown = true;
+    }
+    return getEnvNumber('MIN_PROFIT', 0.1);
+  }
+  
+  // Default
+  return 0.1;
+}
+
 // Flashloan asset type
 export type FlashloanAsset = 'SUI' | 'USDC';
 
@@ -65,7 +97,7 @@ export const config = {
   liveConfirm: getEnvBoolean('LIVE_CONFIRM', false),
 
   // Profit and Spread Thresholds
-  minProfitUsdc: getEnvNumber('MIN_PROFIT_USDC', 0.1),
+  minProfitUsd: getMinProfitUsd(), // Canonical: MIN_PROFIT_USD (fallback: MIN_PROFIT_USDC, MIN_PROFIT)
   minSpreadPercent: getEnvNumber('MIN_SPREAD_PERCENT', 0.5),
   consecutiveSpreadRequired: getEnvNumber('CONSECUTIVE_SPREAD_REQUIRED', 2),
 
@@ -109,6 +141,16 @@ export const config = {
   // Retry configuration
   maxRetries: getEnvNumber('MAX_RETRIES', 3),
   retryDelayMs: getEnvNumber('RETRY_DELAY_MS', 1_000),
+
+  // WebSocket Configuration
+  enableWs: getEnvBoolean('ENABLE_WS', false),
+  wsTriggerMode: getEnvString('WS_TRIGGER_MODE', 'object') as 'object' | 'event',
+  minSwapUsd: getEnvNumber('MIN_SWAP_USD', 0), // 0 disables size gate; event mode only
+
+  // Telegram Configuration
+  enableTelegram: getEnvBoolean('ENABLE_TELEGRAM', false),
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
 };
 
 // Validate critical configuration
