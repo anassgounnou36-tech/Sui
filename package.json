@@ -33,10 +33,12 @@
     "axios": "^1.6.0",
     "decimal.js": "^10.6.0",
     "dotenv": "^16.4.0",
-    "turbos-clmm-sdk": "^3.6.0"
+    "turbos-clmm-sdk": "^3.6.0",
+    "ws": "^8.17.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
     "@typescript-eslint/eslint-plugin": "^6.19.0",
     "@typescript-eslint/parser": "^6.19.0",
     "eslint": "^8.56.0",
