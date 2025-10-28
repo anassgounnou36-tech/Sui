@@ -133,6 +133,7 @@ export const config = {
   enableWs: getEnvBoolean('ENABLE_WS', false),
   wsTriggerMode: getWsTriggerMode(),
   minSwapUsd: getEnvNumber('MIN_SWAP_USD', 0),
+  wsEndpoint: getEnvStringOptional('WS_ENDPOINT', ''),
 
   // Risk Management
   maxSlippagePercent: getEnvNumber('MAX_SLIPPAGE_PERCENT', 1.0),
