@@ -4,7 +4,9 @@
  */
 
 (function runTests() {
-  // Since normalizeTypeForCompare is not exported, we'll recreate it here for testing
+  // NOTE: This function is intentionally duplicated from src/flashloan.ts
+  // for testing purposes, since normalizeTypeForCompare is not exported.
+  // This is acceptable for a unit test to remain self-contained.
   function normalizeTypeForCompare(typeStr: string): string {
     if (!typeStr) return '';
     
