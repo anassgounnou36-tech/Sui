@@ -1,5 +1,5 @@
 import { logger } from './logger';
-import { config, smallestUnitToUsdc } from './config';
+import { config, smallestUnitToUsdc, smallestUnitToSui } from './config';
 import { COIN_TYPES } from './addresses';
 import { buildTransaction, signAndExecuteTransaction } from './utils/sui';
 import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi, readSuilendReserveConfig, calculateRepayAmountFromBps } from './flashloan';
@@ -123,13 +123,13 @@ async function validateArbOpportunity(
       .toNumber();
 
     logger.info(`Validation passed:`);
-    logger.info(`  First swap: ${flashloanAmount} USDC -> ${firstSwapQuote.amountOut} SUI`);
+    logger.info(`  First swap: ${smallestUnitToSui(flashloanAmount).toFixed(6)} SUI -> ${smallestUnitToUsdc(firstSwapQuote.amountOut).toFixed(6)} USDC`);
     logger.info(
-      `  Second swap: ${firstSwapQuote.amountOut} SUI -> ${secondSwapQuote.amountOut} USDC`
+      `  Second swap: ${smallestUnitToUsdc(firstSwapQuote.amountOut).toFixed(6)} USDC -> ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI`
     );
-    logger.info(`  Repay: ${repayAmount} USDC (flashloan + ${flashloanFeePercent}% fee)`);
+    logger.info(`  Repay: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI (flashloan + ${flashloanFeePercent}% fee)`);
     logger.info(
-      `  Expected profit: ${expectedProfit} (${smallestUnitToUsdc(expectedProfit).toFixed(6)} USDC)`
+      `  Expected profit: ${smallestUnitToSui(expectedProfit).toFixed(6)} SUI`
     );
     logger.info(`  Profit margin: ${profitMargin.toFixed(4)}%`);
 

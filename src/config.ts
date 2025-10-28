@@ -83,8 +83,8 @@ export const config = {
   rpcUrl: getEnvString('SUI_RPC_MAINNET', 'https://sui-mainnet.public.blastapi.io'),
 
   // Wallet Configuration
-  privateKey: getEnvString('PRIVATE_KEY', ''),
-  walletAddress: getEnvString('WALLET_ADDRESS', ''),
+  privateKey: getEnvString('PRIVATE_KEY', 'dummy_key_for_simulation'),
+  walletAddress: getEnvString('WALLET_ADDRESS', '0x0000000000000000000000000000000000000000000000000000000000000000'),
 
   // Flashloan Configuration
   flashloanAsset: getEnvString('FLASHLOAN_ASSET', 'SUI') as FlashloanAsset,
