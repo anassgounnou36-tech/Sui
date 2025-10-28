@@ -1,4 +1,4 @@
-import { config, validateConfig, smallestUnitToUsdc, smallestUnitToSui, usdcToSmallestUnit } from './config';
+import { config, validateConfig, smallestUnitToUsdc, smallestUnitToSui } from './config';
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
 import { runStartupVerification } from './verify';
@@ -163,7 +163,7 @@ async function feeTierMonitoringLoop() {
     // Execute arbitrage
     logger.info(`=== EXECUTING FEE-TIER ARBITRAGE: ${direction} ===`);
     const flashloanAmount = BigInt(config.flashloanAmount);
-    const minProfit = usdcToSmallestUnit(config.minProfitUsdc);
+    const minProfitUsd = config.minProfitUsd;
 
     pendingTransactions++;
     lastExecutionTime = Date.now();
@@ -172,7 +172,7 @@ async function feeTierMonitoringLoop() {
     const result = await executeFlashloanArb(
       direction,
       flashloanAmount,
-      minProfit,
+      minProfitUsd,
       // Notification callback: called after validation passes, before PTB building
       async (dir, amount, minProf, expectedProfit, isDryRun) => {
         try {
@@ -205,7 +205,7 @@ async function feeTierMonitoringLoop() {
         timestamp: new Date().toISOString(),
         direction,
         size: flashloanAmount.toString(),
-        minOut: minProfit.toString(),
+        minProfitUsd: minProfitUsd.toString(),
         provider: 'suilend',
         repayAmount: flashloanAmount.toString(),
         realizedProfit: result.profit?.toString(),
@@ -239,7 +239,7 @@ async function feeTierMonitoringLoop() {
         timestamp: new Date().toISOString(),
         direction,
         size: flashloanAmount.toString(),
-        minOut: minProfit.toString(),
+        minProfitUsd: minProfitUsd.toString(),
         provider: 'suilend',
         repayAmount: flashloanAmount.toString(),
         status: 'failed',
@@ -359,7 +359,7 @@ async function main() {
     logger.info(`  Strategy: Cetus fee-tier arbitrage`);
     logger.info(`  Flashloan asset: ${config.flashloanAsset}`);
     logger.info(`  Flashloan amount: ${config.flashloanAsset === 'SUI' ? smallestUnitToSui(BigInt(config.flashloanAmount)) + ' SUI' : smallestUnitToUsdc(BigInt(config.flashloanAmount)) + ' USDC'}`);
-    logger.info(`  Min profit: ${config.minProfitUsdc} USDC`);
+    logger.info(`  Min profit: ${config.minProfitUsd} USDC`);
     logger.info(`  Min spread: ${config.minSpreadPercent}%`);
     logger.info(`  Max slippage: ${config.maxSlippagePercent}%`);
     logger.info(`  Check interval: ${config.checkIntervalMs}ms`);
