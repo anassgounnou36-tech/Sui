@@ -1,3 +1,6 @@
+// WebSocket polyfill must be loaded first for Sui SDK event subscriptions
+import './polyfills/websocket';
+
 import { config, validateConfig, smallestUnitToUsdc, smallestUnitToSui } from './config';
 import { logger } from './logger';
 import { initializeRpcClient, initializeKeypair, getAllBalances } from './utils/sui';
