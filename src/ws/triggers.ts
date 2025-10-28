@@ -9,6 +9,22 @@ type SuiEvent = any; // Using any for compatibility with @mysten/sui API
 
 export type TriggerCallback = () => Promise<void>;
 
+// WebSocket close codes
+const WS_CLOSE_NORMAL = 1000; // Normal closure
+const WS_CLOSE_UNSUPPORTED = 4000; // Unsupported data or protocol
+
+/**
+ * Extract swap amount in USD from event data
+ * Assumes USDC decimals (6) for amount_in field
+ */
+function extractSwapAmountUsd(eventData: any): number | null {
+  if (!eventData || !eventData.amount_in) {
+    return null;
+  }
+  // USDC has 6 decimals
+  return parseFloat(eventData.amount_in) / 1_000_000;
+}
+
 /**
  * WebSocket Trigger Manager
  * Monitors Cetus pools for updates and triggers re-evaluation
@@ -175,14 +191,11 @@ export class WebSocketTriggerManager {
         onMessage: async (event: SuiEvent) => {
           // Apply MIN_SWAP_USD filter if configured
           if (this.minSwapUsd > 0) {
-            // Extract swap amount from event data and compare to threshold
             const swapData = event.parsedJson as any;
-            if (swapData && swapData.amount_in) {
-              const amountUsd = parseFloat(swapData.amount_in) / 1_000_000; // Assuming USDC decimals
-              if (amountUsd < this.minSwapUsd) {
-                logger.debug(`Swap amount (${amountUsd} USD) below threshold (${this.minSwapUsd} USD), skipping`);
-                return;
-              }
+            const amountUsd = extractSwapAmountUsd(swapData);
+            if (amountUsd !== null && amountUsd < this.minSwapUsd) {
+              logger.debug(`Swap amount (${amountUsd} USD) below threshold (${this.minSwapUsd} USD), skipping`);
+              return;
             }
           }
 
@@ -312,12 +325,10 @@ export class WebSocketTriggerManager {
           // Apply MIN_SWAP_USD filter if configured
           if (this.minSwapUsd > 0) {
             const swapData = event.parsedJson as any;
-            if (swapData && swapData.amount_in) {
-              const amountUsd = parseFloat(swapData.amount_in) / 1_000_000; // Assuming USDC decimals
-              if (amountUsd < this.minSwapUsd) {
-                logger.debug(`Swap amount (${amountUsd} USD) below threshold (${this.minSwapUsd} USD), skipping`);
-                return;
-              }
+            const amountUsd = extractSwapAmountUsd(swapData);
+            if (amountUsd !== null && amountUsd < this.minSwapUsd) {
+              logger.debug(`Swap amount (${amountUsd} USD) below threshold (${this.minSwapUsd} USD), skipping`);
+              return;
             }
           }
           
@@ -359,7 +370,7 @@ export class WebSocketTriggerManager {
       }
       
       // Exponential backoff retry (if still active and not a hard failure)
-      if (this.isActive && code !== 1000 && code !== 4000) {
+      if (this.isActive && code !== WS_CLOSE_NORMAL && code !== WS_CLOSE_UNSUPPORTED) {
         const delay = Math.min(1000 * Math.pow(2, retryCount), 60000); // Max 60s
         logger.info(`Reconnecting in ${delay}ms (attempt ${retryCount + 1})...`);
         
