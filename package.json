@@ -14,7 +14,8 @@
     "spread": "node dist/scripts/print-spread.js",
     "simulate": "node dist/scripts/simulate.js",
     "find-pools": "node dist/scripts/find-pools.js",
-    "find-cetus-fee-pools": "node dist/scripts/find-cetus-fee-pools.js"
+    "find-cetus-fee-pools": "node dist/scripts/find-cetus-fee-pools.js",
+    "generate-wallet": "node scripts/generate-wallet.mjs"
   },
   "keywords": [
     "sui",
