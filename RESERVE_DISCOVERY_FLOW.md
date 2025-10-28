@@ -60,16 +60,21 @@ This document describes the reserve discovery logic after implementing type pars
     │ For each reserve:      │             │
     │                        │◄────────────┘
     │ 1. Parse coin type     │
+    │    PRIMARY: TypeName   │
+    │    fields.coin_type    │
+    │    .fields.name        │
+    │                        │
+    │ 2. FALLBACK: Parse     │
     │    from reserve.type:  │
     │    /::reserve::        │
     │    Reserve<(.+)>$/     │
     │                        │
-    │ 2. If no type field,   │
-    │    try fields.coin_type│
-    │    (fallback)          │
+    │ 3. Normalize both      │
+    │    reserve & target    │
+    │    coin types          │
     │                        │
-    │ 3. Compare with        │
-    │    targetCoinType      │
+    │ 4. Compare normalized  │
+    │    strings             │
     └────────┬───────────────┘
              │
           ┌──┴───┐
@@ -128,24 +133,34 @@ This document describes the reserve discovery logic after implementing type pars
 
 ## Key Improvements
 
-### 1. Type Parsing (NEW)
-- **Primary Method**: Parse `reserve.type` using regex
-- **Pattern**: `/::reserve::Reserve<(.+)>$/`
+### 1. Type Parsing
+- **Primary Method**: Read from `fields.coin_type.fields.name` (TypeName struct)
+- **Fallback**: Parse `reserve.type` using regex `/::reserve::Reserve<(.+)>$/`
 - **Example**: `...::Reserve<0x2::sui::SUI>` → `0x2::sui::SUI`
-- **Fallback**: If type parsing fails, try `fields.coin_type.*`
 
-### 2. Enhanced Logging
+### 2. Type Normalization (NEW)
+- **Problem**: Mainnet returns padded addresses like `0000...002::sui::SUI` vs `0x2::sui::SUI`
+- **Solution**: `normalizeTypeForCompare()` function:
+  - Strips `0x` prefix
+  - Removes leading zeros from addresses
+  - Lowercases all parts
+  - Example: Both `0x2::sui::SUI` and `0000...002::sui::SUI` → `2::sui::sui`
+- **Result**: Reliable matching across different address formats
+
+### 3. Enhanced Logging
 - Market field keys (one-time diagnostic)
-- First 2 reserve types (DEBUG mode verification)
-- Parsed coin type shown in match result
+- First 3 reserve types with raw and normalized versions
+- Normalized match comparison shown in results
 - Sample repay calculation for demonstration
+- Error messages include unique normalized types for debugging
 
-### 3. Conditional Paths
+### 4. Conditional Paths
 - **Vector Path**: Used when `reserves` is an array (PREFERRED)
 - **Bag Path**: Used when `reserves` is not an array (FALLBACK)
 - No hard failure if Bag ID missing when vector exists
+- Both paths use normalized comparison
 
-### 4. Backward Compatibility
+### 5. Backward Compatibility
 - Fallback to `fields.coin_type` still works
 - All existing function signatures unchanged
 - Compat aliases maintained (reserveIndex, borrowFeeBps)
@@ -156,12 +171,20 @@ This document describes the reserve discovery logic after implementing type pars
 ```
 [Suilend] Market object fields: reserves, config, rate_limiter, fee_receiver
 [Suilend] Using vector-based discovery: 42 reserves found
-[Suilend] DEBUG - First reserve types for verification:
-  Reserve[0].type: 0xf95b...::reserve::Reserve<0x2::sui::SUI>
-  Reserve[1].type: 0xf95b...::reserve::Reserve<0x5d4b...::coin::COIN>
-✓ Found Suilend reserve for 0x2::sui::SUI
+[Suilend] DEBUG - First 3 reserve coin types (raw and normalized):
+  Reserve[0] raw: 0000000000000000000000000000000000000000000000000000000000000002::sui::SUI
+  Reserve[0] normalized: 2::sui::sui
+  Reserve[1] raw: 5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN
+  Reserve[1] normalized: 5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::coin
+  Reserve[2] raw: af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::COIN
+  Reserve[2] normalized: af8cd5edc19637e05da0dd46f6ddb1a8b81cc532fcccf6d5d41ba77bba6eddd5::coin::coin
+[Suilend] Target coin type: 0x2::sui::SUI
+[Suilend] Target normalized: 2::sui::sui
+✓ Found Suilend reserve for 0x2::sui::SUI (Vector match)
   Reserve index: 0
-  Parsed coin type: 0x2::sui::SUI
+  Match method: TypeName
+  Raw coin type: 0000000000000000000000000000000000000000000000000000000000000002::sui::SUI
+  Normalized match: 2::sui::sui == 2::sui::sui
   Fee (borrow_fee): 5 bps (0.05%)
   Available: 1234567.89 SUI
   Sample repay (for 1000 SUI principal): 1000.500000 SUI
@@ -175,14 +198,28 @@ This document describes the reserve discovery logic after implementing type pars
 [Bag fallback] Page 1: Found 10 dynamic fields
 ✓ Found Suilend reserve for 0x2::sui::SUI (Bag fallback)
   Reserve key: 0
+  Raw coin type: 0000000000000000000000000000000000000000000000000000000000000002::sui::SUI
+  Normalized match: 2::sui::sui == 2::sui::sui
   Fee: 5 bps (0.05%)
   Available: 1234567.89 SUI
+```
+
+### Reserve Not Found (with diagnostics)
+```
+[Suilend] Using vector-based discovery: 42 reserves found
+[Suilend] Target coin type: 0x2::sui::SUI
+[Suilend] Target normalized: 2::sui::sui
+Could not find reserve for coin type 0x2::sui::SUI (normalized: 2::sui::sui) in Suilend reserves vector (searched 42 reserves)
+Available normalized types: 2::sui::sui, 5d4b...::coin::coin, af8cd...::coin::coin, ...
+Available raw types (first 5): 0000...002::sui::SUI, 5d4b...::coin::COIN, ...
 ```
 
 ## Error Handling
 
 ### Vector Path Not Found
-- Logs warning with reserve count
+- Logs warning with reserve count and normalized types
+- Shows unique normalized types for debugging
+- Shows first 5 raw types for reference
 - In DRY_RUN: Uses defaults, continues
 - In live mode: Throws error with details
 
@@ -198,10 +235,15 @@ This document describes the reserve discovery logic after implementing type pars
 
 ## Testing Coverage
 
-1. ✅ Regex pattern validation (all formats)
-2. ✅ Type parsing from reserve.type
-3. ✅ Fallback to fields.coin_type
-4. ✅ Reserve matching logic
+1. ✅ Coin type normalization (14 test cases)
+   - Standard 0x-prefixed addresses
+   - 64-hex padded addresses (mainnet format)
+   - Leading zeros removal
+   - Case normalization
+   - Multi-part type paths
+2. ✅ Type parsing from TypeName (primary)
+3. ✅ Fallback parsing from reserve.type
+4. ✅ Normalized reserve matching logic
 5. ✅ Fee extraction (multiple paths)
 6. ✅ Available amount extraction
 7. ✅ Sample repay calculations
