@@ -72,6 +72,19 @@ function getMinProfitUsd(): number {
   return 0;
 }
 
+/**
+ * Get WebSocket trigger mode with validation
+ */
+function getWsTriggerMode(): 'object' | 'event' {
+  const mode = getEnvStringOptional('WS_TRIGGER_MODE', 'object');
+  if (mode !== 'object' && mode !== 'event') {
+    throw new Error(
+      `Invalid WS_TRIGGER_MODE: ${mode}. Must be 'object' or 'event'`
+    );
+  }
+  return mode;
+}
+
 // Flashloan asset type
 export type FlashloanAsset = 'SUI' | 'USDC';
 
@@ -118,7 +131,7 @@ export const config = {
 
   // WebSocket Configuration
   enableWs: getEnvBoolean('ENABLE_WS', false),
-  wsTriggerMode: getEnvStringOptional('WS_TRIGGER_MODE', 'object') as 'object' | 'event',
+  wsTriggerMode: getWsTriggerMode(),
   minSwapUsd: getEnvNumber('MIN_SWAP_USD', 0),
 
   // Risk Management
@@ -203,6 +216,23 @@ export function validateConfig(): void {
 
   if (config.minSpreadPercent < 0.1) {
     console.warn('Warning: MIN_SPREAD_PERCENT < 0.1% may result in unprofitable trades after fees');
+  }
+
+  // Validate Telegram configuration
+  if (config.enableTelegram) {
+    if (!config.telegramBotToken || !config.telegramChatId) {
+      console.warn(
+        '⚠️  WARNING: ENABLE_TELEGRAM is true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing. ' +
+        'Telegram notifications will be disabled.'
+      );
+    }
+  }
+
+  // Validate WebSocket configuration
+  if (config.enableWs && config.wsTriggerMode === 'event') {
+    if (config.minSwapUsd < 0) {
+      throw new Error('MIN_SWAP_USD cannot be negative');
+    }
   }
 
   // Validate flashloan amount based on asset type
