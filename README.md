@@ -67,6 +67,9 @@ npm install
 # Copy environment template
 cp .env.example .env
 
+# Generate a new wallet (optional)
+npm run wallet:generate
+
 # Edit .env with your configuration
 nano .env
 ```
@@ -106,6 +109,25 @@ If you see an error mentioning `0x5d4b30...` (Wormhole USDC):
 3. Remove any `USDC_COIN_TYPE` or `ALLOW_WRAPPED_USDC` settings (deprecated)
 
 ### Essential Configuration
+
+#### Generating a Wallet
+
+If you need a new Sui wallet, you can use the built-in generator:
+
+```bash
+npm run wallet:generate
+```
+
+This will output a new Ed25519 keypair in `.env`-ready format:
+```
+PRIVATE_KEY=suiprivkey1...
+```
+
+Simply copy the output line to your `.env` file. The script also displays your wallet address for reference.
+
+**Security Warning:** Never share your private key or commit it to version control!
+
+#### Environment Variables
 
 ```env
 # Multi-RPC Configuration (automatic failover)
