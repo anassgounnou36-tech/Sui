@@ -1,5 +1,5 @@
 import { logger } from './logger';
-import { config, smallestUnitToUsdc } from './config';
+import { config, smallestUnitToUsdc, smallestUnitToSui } from './config';
 import { COIN_TYPES } from './addresses';
 import { buildTransaction, signAndExecuteTransaction } from './utils/sui';
 import { borrowFromSuilend, repayToSuilend, borrowFromNavi, repayToNavi, readSuilendReserveConfig, calculateRepayAmountFromBps } from './flashloan';
@@ -7,6 +7,7 @@ import {
   quoteCetusPoolSwapB2A,
   quoteCetusPoolSwapA2B,
   buildCetusPoolSwap,
+  getCetusPriceByPool,
 } from './cetusIntegration';
 import { getCetusPools } from './resolve';
 import { calculateMinOut } from './slippage';
@@ -29,7 +30,7 @@ export interface ArbResult {
 export type NotifyExecutionStartFn = (
   direction: ArbDirection,
   flashloanAmount: bigint,
-  minProfit: bigint,
+  minProfitUsd: number,
   expectedProfit: bigint,
   isDryRun: boolean
 ) => Promise<void>;
@@ -42,7 +43,7 @@ export type NotifyExecutionStartFn = (
 async function validateArbOpportunity(
   direction: ArbDirection,
   flashloanAmount: bigint,
-  minProfit: bigint,
+  minProfitUsd: number,
   flashloanFeePercent: number
 ): Promise<{ valid: boolean; error?: string; quotes?: any }> {
   try {
@@ -100,36 +101,48 @@ async function validateArbOpportunity(
       (flashloanAmount * BigInt(Math.floor(flashloanFeePercent * 100))) / BigInt(10000);
     const repayAmount = flashloanAmount + flashloanFee;
 
-    // Safety check 3: Verify second swap output covers repay + min profit
-    const requiredOutput = repayAmount + minProfit;
+    // Safety check 3: Calculate expected profit in SUI
+    const expectedProfit = secondSwapQuote.amountOut - repayAmount;
+    
+    // Get price for USD conversion (from the pool used for the second swap)
+    const pools = getCetusPools();
+    const pricePool = direction === 'cetus-005-to-025' ? pools.pool025 : pools.pool005;
+    const priceUsdcPerSui = await getCetusPriceByPool(pricePool);
+    
+    // Convert profit to USD
+    const expectedProfitSui = smallestUnitToSui(expectedProfit > BigInt(0) ? expectedProfit : BigInt(0));
+    const expectedProfitUsd = expectedProfitSui * priceUsdcPerSui;
 
-    if (secondSwapQuote.amountOut < requiredOutput) {
-      const shortfall = requiredOutput - secondSwapQuote.amountOut;
+    // Check if profit meets USD threshold
+    if (expectedProfitUsd < minProfitUsd) {
       return {
         valid: false,
         error:
-          `Insufficient profit: need ${requiredOutput} USDC, ` +
-          `but would get ${secondSwapQuote.amountOut} USDC. ` +
-          `Shortfall: ${shortfall} (${smallestUnitToUsdc(shortfall).toFixed(6)} USDC)`,
+          `Insufficient profit: expected ${expectedProfitUsd.toFixed(6)} USD, ` +
+          `but MIN_PROFIT threshold is ${minProfitUsd.toFixed(6)} USD. ` +
+          `(Expected profit in SUI: ${smallestUnitToSui(expectedProfit).toFixed(6)} SUI at ${priceUsdcPerSui.toFixed(6)} USDC/SUI)`,
       };
     }
 
     // Safety check 4: Verify slippage protection is reasonable
-    const expectedProfit = secondSwapQuote.amountOut - repayAmount;
     const profitMargin = new Decimal(expectedProfit.toString())
       .div(repayAmount.toString())
       .mul(100)
       .toNumber();
 
     logger.info(`Validation passed:`);
-    logger.info(`  First swap: ${flashloanAmount} USDC -> ${firstSwapQuote.amountOut} SUI`);
+    logger.info(`  First swap: ${smallestUnitToSui(flashloanAmount).toFixed(6)} SUI -> ${smallestUnitToUsdc(firstSwapQuote.amountOut).toFixed(6)} USDC`);
     logger.info(
-      `  Second swap: ${firstSwapQuote.amountOut} SUI -> ${secondSwapQuote.amountOut} USDC`
+      `  Second swap: ${smallestUnitToUsdc(firstSwapQuote.amountOut).toFixed(6)} USDC -> ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI`
     );
-    logger.info(`  Repay: ${repayAmount} USDC (flashloan + ${flashloanFeePercent}% fee)`);
+    logger.info(`  Repay: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI (flashloan + ${flashloanFeePercent}% fee)`);
     logger.info(
-      `  Expected profit: ${expectedProfit} (${smallestUnitToUsdc(expectedProfit).toFixed(6)} USDC)`
+      `  Expected Profit (SUI): ${smallestUnitToSui(expectedProfit).toFixed(6)} SUI`
     );
+    logger.info(
+      `  Expected Profit (USD): ${expectedProfitUsd.toFixed(6)} USDC (at ${priceUsdcPerSui.toFixed(6)} USDC/SUI)`
+    );
+    logger.info(`  MIN_PROFIT Threshold: ${minProfitUsd.toFixed(6)} USDC`);
     logger.info(`  Profit margin: ${profitMargin.toFixed(4)}%`);
 
     return {
@@ -153,18 +166,18 @@ async function validateArbOpportunity(
 /**
  * Execute flashloan arbitrage
  * @param direction Direction of arbitrage
- * @param amount Flashloan amount in USDC (smallest units)
- * @param minProfit Minimum required profit in USDC (smallest units)
+ * @param amount Flashloan amount in SUI (smallest units)
+ * @param minProfitUsd Minimum required profit in USD
  * @param onValidationSuccess Optional callback when validation passes (before PTB building)
  * @returns Execution result
  */
 export async function executeFlashloanArb(
   direction: ArbDirection,
   amount: bigint,
-  minProfit: bigint,
+  minProfitUsd: number,
   onValidationSuccess?: NotifyExecutionStartFn
 ): Promise<ArbResult> {
-  logger.info(`Executing arbitrage: ${direction}, amount: ${amount}, minProfit: ${minProfit}`);
+  logger.info(`Executing arbitrage: ${direction}, amount: ${amount}, minProfitUsd: ${minProfitUsd}`);
 
   try {
     // Determine which flashloan provider to use
@@ -183,7 +196,7 @@ export async function executeFlashloanArb(
 
     // Validate opportunity with real quotes BEFORE building transaction
     logger.info('Validating arbitrage opportunity...');
-    const validation = await validateArbOpportunity(direction, amount, minProfit, flashloanFeePercent);
+    const validation = await validateArbOpportunity(direction, amount, minProfitUsd, flashloanFeePercent);
 
     if (!validation.valid) {
       logger.warn(`Opportunity validation failed: ${validation.error}`);
@@ -200,7 +213,7 @@ export async function executeFlashloanArb(
 
     // Notify execution start (after validation passes, before PTB building)
     if (onValidationSuccess) {
-      await onValidationSuccess(direction, amount, minProfit, expectedProfit, config.dryRun);
+      await onValidationSuccess(direction, amount, minProfitUsd, expectedProfit, config.dryRun);
     }
 
     // Build the transaction
@@ -348,11 +361,11 @@ export async function executeFlashloanArb(
     if (config.dryRun) {
       logger.info('=== DRY RUN MODE ===');
       logger.info('Transaction validated and built successfully:');
-      logger.info(`1. Borrow ${amount} USDC via flashloan`);
-      logger.info(`2. First swap: ${amount} USDC -> ${firstSwap.amountOut} SUI (min: ${calculateMinOut(firstSwap.amountOut, config.maxSlippagePercent)})`);
-      logger.info(`3. Second swap: ${firstSwap.amountOut} SUI -> ${secondSwap.amountOut} USDC (min: ${repayAmount + minProfit})`);
-      logger.info(`4. Repay ${repayAmount} USDC`);
-      logger.info(`5. Profit to wallet: ${expectedProfit} (${smallestUnitToUsdc(expectedProfit).toFixed(6)} USDC)`);
+      logger.info(`1. Borrow ${smallestUnitToSui(amount).toFixed(6)} SUI via flashloan`);
+      logger.info(`2. First swap: ${smallestUnitToSui(amount).toFixed(6)} SUI -> ${smallestUnitToUsdc(firstSwap.amountOut).toFixed(6)} USDC (min: ${smallestUnitToUsdc(calculateMinOut(firstSwap.amountOut, config.maxSlippagePercent)).toFixed(6)} USDC)`);
+      logger.info(`3. Second swap: ${smallestUnitToUsdc(firstSwap.amountOut).toFixed(6)} USDC -> ${smallestUnitToSui(secondSwap.amountOut).toFixed(6)} SUI (min: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI)`);
+      logger.info(`4. Repay ${smallestUnitToSui(repayAmount).toFixed(6)} SUI`);
+      logger.info(`5. Profit to wallet: ${smallestUnitToSui(expectedProfit).toFixed(6)} SUI`);
       logger.info('=== DRY RUN COMPLETE (not executed) ===');
 
       return {

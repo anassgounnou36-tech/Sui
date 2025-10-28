@@ -100,7 +100,7 @@ export class TelegramNotifier {
   async notifyExecutionStart(
     direction: ArbDirection,
     flashloanAmount: bigint,
-    minProfit: bigint,
+    minProfitUsd: number,
     expectedProfit: bigint,
     isDryRun: boolean
   ): Promise<void> {
@@ -110,7 +110,6 @@ export class TelegramNotifier {
       : 'Buy 0.25% → Sell 0.05%';
     
     const flashloanSui = smallestUnitToSui(flashloanAmount);
-    const minProfitSui = smallestUnitToSui(minProfit);
     const expectedProfitSui = smallestUnitToSui(expectedProfit);
 
     const mode = isDryRun ? '🔷 DRY RUN' : '🚀 LIVE';
@@ -120,7 +119,7 @@ export class TelegramNotifier {
 
 <b>Direction:</b> ${directionText}
 <b>Flashloan:</b> ${flashloanSui.toFixed(2)} SUI
-<b>Min Profit:</b> ${minProfitSui.toFixed(6)} SUI
+<b>Min Profit:</b> ${minProfitUsd.toFixed(6)} USDC
 <b>Expected Profit:</b> ${expectedProfitSui.toFixed(6)} SUI
 
 <b>Time:</b> ${timestamp}

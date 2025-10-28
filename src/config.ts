@@ -65,7 +65,7 @@ export const config = {
   liveConfirm: getEnvBoolean('LIVE_CONFIRM', false),
 
   // Profit and Spread Thresholds
-  minProfitUsdc: getEnvNumber('MIN_PROFIT_USDC', 0.1),
+  minProfitUsd: getEnvNumber('MIN_PROFIT', 0), // Minimum profit threshold in USD
   minSpreadPercent: getEnvNumber('MIN_SPREAD_PERCENT', 0.5),
   consecutiveSpreadRequired: getEnvNumber('CONSECUTIVE_SPREAD_REQUIRED', 2),
 

@@ -1,7 +1,7 @@
 import { config, smallestUnitToSui, smallestUnitToUsdc } from '../src/config';
 import { initializeRpcClient } from '../src/utils/sui';
 import { resolvePoolAddresses, getCetusPools } from '../src/resolve';
-import { quoteCetusPoolSwapB2A, quoteCetusPoolSwapA2B } from '../src/cetusIntegration';
+import { quoteCetusPoolSwapB2A, quoteCetusPoolSwapA2B, getCetusPriceByPool } from '../src/cetusIntegration';
 import { SUILEND, CETUS, COIN_TYPES } from '../src/addresses';
 import { calculateMinOut } from '../src/slippage';
 import { readSuilendReserveConfig, calculateRepayAmountFromBps } from '../src/flashloan';
@@ -105,14 +105,32 @@ async function simulateArbitrage() {
     const estimatedProfit = secondSwapQuote.amountOut - repayAmount;
     const isProfitable = estimatedProfit > BigInt(0);
 
+    // Get price for USD conversion (from the pool used for the second swap)
+    const pricePool = sellOn005 ? pools.pool025 : pools.pool005;
+    const priceUsdcPerSui = await getCetusPriceByPool(pricePool);
+
+    // Calculate profit in USD
+    const estimatedProfitSui = smallestUnitToSui(estimatedProfit > BigInt(0) ? estimatedProfit : BigInt(0));
+    const estimatedProfitUsd = estimatedProfitSui * priceUsdcPerSui;
+
     console.log('=== Profitability Check ===');
     console.log(`Expected Output: ${smallestUnitToSui(secondSwapQuote.amountOut).toFixed(6)} SUI`);
     console.log(`Repay Amount: ${smallestUnitToSui(repayAmount).toFixed(6)} SUI`);
-    console.log(`Estimated Profit: ${smallestUnitToSui(estimatedProfit).toFixed(6)} SUI`);
-    console.log(`Status: ${isProfitable ? '✓ PROFITABLE' : '✗ NOT PROFITABLE'}\n`);
+    console.log(`Expected Profit (SUI): ${smallestUnitToSui(estimatedProfit).toFixed(6)} SUI`);
+    console.log(`Expected Profit (USD): ${estimatedProfitUsd.toFixed(6)} USDC`);
+    console.log(`Price (USDC/SUI): ${priceUsdcPerSui.toFixed(6)} USDC/SUI`);
+    console.log(`MIN_PROFIT Threshold: ${config.minProfitUsd.toFixed(6)} USDC`);
+    
+    const meetsThreshold = estimatedProfitUsd >= config.minProfitUsd;
+    console.log(`Status: ${isProfitable ? '✓ PROFITABLE' : '✗ NOT PROFITABLE'} | Threshold: ${meetsThreshold ? '✓ MEETS' : '✗ DOES NOT MEET'}\n`);
 
-    if (!isProfitable) {
-      console.log('⚠️  Simulation shows no profit. Would not execute in production.\n');
+    if (!isProfitable || !meetsThreshold) {
+      if (!isProfitable) {
+        console.log('⚠️  Simulation shows no profit. Would not execute in production.\n');
+      }
+      if (!meetsThreshold) {
+        console.log(`⚠️  Expected profit (${estimatedProfitUsd.toFixed(6)} USDC) below MIN_PROFIT threshold (${config.minProfitUsd.toFixed(6)} USDC). Would not execute in production.\n`);
+      }
     }
 
     // Build the PTB structure description

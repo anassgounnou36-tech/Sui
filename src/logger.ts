@@ -140,7 +140,7 @@ class Logger {
     size: string;
     cetusQuote?: string;
     turbosQuote?: string;
-    minOut: string;
+    minProfitUsd: string;
     provider: string;
     repayAmount: string;
     realizedProfit?: string;
