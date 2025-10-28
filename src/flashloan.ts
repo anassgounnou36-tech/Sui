@@ -31,6 +31,44 @@ export interface SuilendReserveConfig {
 }
 
 /**
+ * Normalize a Move type string for comparison by standardizing address format.
+ * Handles both 0x-prefixed and 64-hex padded addresses.
+ * 
+ * Example transformations:
+ * - "0x2::sui::SUI" -> "2::sui::sui"
+ * - "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI" -> "2::sui::sui"
+ * - "0x0002::sui::SUI" -> "2::sui::sui"
+ * 
+ * @param typeStr Move type string (e.g., "0x2::sui::SUI")
+ * @returns Normalized type string with addresses stripped of 0x, lowercased, and leading zeros removed
+ */
+function normalizeTypeForCompare(typeStr: string): string {
+  if (!typeStr) return '';
+  
+  // Split by :: to process each part
+  const parts = typeStr.split('::');
+  if (parts.length === 0) return '';
+  
+  // Normalize the address part (first part)
+  let address = parts[0];
+  
+  // Remove 0x prefix if present
+  if (address.startsWith('0x') || address.startsWith('0X')) {
+    address = address.substring(2);
+  }
+  
+  // Remove leading zeros, but keep at least one digit
+  address = address.replace(/^0+/, '') || '0';
+  
+  // Lowercase the address
+  address = address.toLowerCase();
+  
+  // Reconstruct with normalized address and lowercase module/type names
+  const normalizedParts = [address, ...parts.slice(1).map(p => p.toLowerCase())];
+  return normalizedParts.join('::');
+}
+
+/**
  * Read Suilend reserve configuration using Bag-based discovery
  * Overload: (client, marketId, coinType?, opts?) for explicit control
  * Overload: (coinType?) for convenience, uses env vars and default client
@@ -93,14 +131,25 @@ export async function readSuilendReserveConfig(
       // Vector path: reserves is a direct array
       logger.info(`[Suilend] Using vector-based discovery: ${reserves.length} reserves found`);
       
-      // Debug: Log first 2 reserve types to verify parsing
+      // Debug: Log first 3 reserve types with normalized versions
       if (reserves.length > 0) {
-        logger.debug('[Suilend] DEBUG - First reserve types for verification:');
-        for (let i = 0; i < Math.min(2, reserves.length); i++) {
-          const debugType = reserves[i]?.type || 'no type field';
-          logger.debug(`  Reserve[${i}].type: ${debugType}`);
+        logger.debug('[Suilend] DEBUG - First 3 reserve coin types (raw and normalized):');
+        for (let i = 0; i < Math.min(3, reserves.length); i++) {
+          const reserveFields = reserves[i]?.fields || reserves[i];
+          const rawCoinType = reserveFields?.coin_type?.fields?.name 
+            || reserveFields?.coin_type?.name 
+            || reserveFields?.coin_type 
+            || 'no coin_type field';
+          const normalized = normalizeTypeForCompare(rawCoinType);
+          logger.debug(`  Reserve[${i}] raw: ${rawCoinType}`);
+          logger.debug(`  Reserve[${i}] normalized: ${normalized}`);
         }
       }
+      
+      // Normalize target for comparison
+      const normalizedTarget = normalizeTypeForCompare(targetCoinType);
+      logger.debug(`[Suilend] Target coin type: ${targetCoinType}`);
+      logger.debug(`[Suilend] Target normalized: ${normalizedTarget}`);
       
       for (let index = 0; index < reserves.length; index++) {
         const reserve = reserves[index];
@@ -123,7 +172,11 @@ export async function readSuilendReserveConfig(
           }
         }
         
-        if (reserveCoinType === targetCoinType) {
+        // Normalize both types for comparison
+        const normalizedReserve = normalizeTypeForCompare(reserveCoinType || '');
+        const isMatch = normalizedReserve && normalizedTarget && normalizedReserve === normalizedTarget;
+        
+        if (isMatch) {
           // Extract config fields - fee is at config.fields.borrow_fee (bps)
           const reserveConfig = reserveFields?.config?.fields || reserveFields?.config;
           const borrowFee = reserveConfig?.borrow_fee 
@@ -146,10 +199,11 @@ export async function readSuilendReserveConfig(
           const sampleRepay = computeRepayAmountBase(samplePrincipal, BigInt(feeBps));
           const toHuman = (amt: bigint) => isSui ? smallestUnitToSui(amt) : smallestUnitToUsdc(amt);
 
-          logger.info(`✓ Found Suilend reserve for ${targetCoinType}`);
+          logger.info(`✓ Found Suilend reserve for ${targetCoinType} (Vector match)`);
           logger.info(`  Reserve index: ${index}`);
           logger.info(`  Match method: ${matchMethod}`);
-          logger.info(`  Parsed coin type: ${reserveCoinType}`);
+          logger.info(`  Raw coin type: ${reserveCoinType}`);
+          logger.info(`  Normalized match: ${normalizedReserve} == ${normalizedTarget}`);
           logger.info(`  Fee (borrow_fee): ${feeBps} bps (${feeBps / 100}%)`);
           logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
           logger.info(`  Sample repay (for 1000 ${unit} principal): ${toHuman(sampleRepay).toFixed(6)} ${unit}`);
@@ -166,11 +220,28 @@ export async function readSuilendReserveConfig(
         }
       }
       
-      // Not found in vector
-      const errorMsg = `Could not find reserve for coin type ${targetCoinType} in Suilend reserves vector (searched ${reserves.length} reserves)`;
+      // Not found in vector - gather unique normalized types for debugging
+      const uniqueNormalizedTypes = new Set<string>();
+      const uniqueRawTypes = new Set<string>();
+      for (const reserve of reserves) {
+        const reserveFields = reserve.fields || reserve;
+        const rawType = reserveFields?.coin_type?.fields?.name 
+          || reserveFields?.coin_type?.name 
+          || reserveFields?.coin_type;
+        if (rawType) {
+          uniqueRawTypes.add(rawType);
+          uniqueNormalizedTypes.add(normalizeTypeForCompare(rawType));
+        }
+      }
+      
+      const errorMsg = `Could not find reserve for coin type ${targetCoinType} (normalized: ${normalizedTarget}) in Suilend reserves vector (searched ${reserves.length} reserves)`;
+      const debugInfo = `Available normalized types: ${Array.from(uniqueNormalizedTypes).join(', ')}`;
+      const rawDebugInfo = `Available raw types (first 5): ${Array.from(uniqueRawTypes).slice(0, 5).join(', ')}`;
       
       if (config.dryRun) {
         logger.warn(errorMsg);
+        logger.warn(debugInfo);
+        logger.warn(rawDebugInfo);
         logger.warn('Using default reserve config for simulation purposes.');
         
         return {
@@ -183,6 +254,8 @@ export async function readSuilendReserveConfig(
         };
       } else {
         logger.error(errorMsg);
+        logger.error(debugInfo);
+        logger.error(rawDebugInfo);
         throw new Error(`${errorMsg}. Verify SUILEND_LENDING_MARKET and reserve configuration.`);
       }
     }
@@ -295,7 +368,12 @@ export async function readSuilendReserveConfig(
           || reserveFields?.coin_type?.name 
           || reserveFields?.coin_type;
 
-        if (reserveCoinType === targetCoinType) {
+        // Use normalized comparison for Bag fallback too
+        const normalizedReserve = normalizeTypeForCompare(reserveCoinType || '');
+        const normalizedTarget = normalizeTypeForCompare(targetCoinType);
+        const isMatch = normalizedReserve && normalizedTarget && normalizedReserve === normalizedTarget;
+
+        if (isMatch) {
           // Extract config fields
           const reserveConfig = reserveFields?.config?.fields || reserveFields?.config;
           const borrowFee = reserveConfig?.borrow_fee 
@@ -319,6 +397,8 @@ export async function readSuilendReserveConfig(
 
           logger.info(`✓ Found Suilend reserve for ${targetCoinType} (Bag fallback)`);
           logger.info(`  Reserve key: ${reserveKey}`);
+          logger.info(`  Raw coin type: ${reserveCoinType}`);
+          logger.info(`  Normalized match: ${normalizedReserve} == ${normalizedTarget}`);
           logger.info(`  Fee: ${feeBps} bps (${feeBps / 100}%)`);
           logger.info(`  Available: ${humanAmount.toFixed(2)} ${unit}`);
           if (reserveIndex !== undefined) {
