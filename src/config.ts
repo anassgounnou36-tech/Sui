@@ -30,6 +30,44 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
   return value.toLowerCase() === 'true';
 }
 
+// Warn-once tracker for deprecated environment variables
+const warnedDeprecations = new Set<string>();
+
+/**
+ * Get MIN_PROFIT_USD with fallback to deprecated keys and one-time warnings
+ */
+function getMinProfitUsd(): number {
+  // Try canonical key first
+  if (process.env.MIN_PROFIT_USD) {
+    return getEnvNumber('MIN_PROFIT_USD', 0);
+  }
+  
+  // Fallback to deprecated MIN_PROFIT_USDC
+  if (process.env.MIN_PROFIT_USDC) {
+    if (!warnedDeprecations.has('MIN_PROFIT_USDC')) {
+      console.warn(
+        '⚠️  WARNING: MIN_PROFIT_USDC is deprecated. Please use MIN_PROFIT_USD instead.'
+      );
+      warnedDeprecations.add('MIN_PROFIT_USDC');
+    }
+    return getEnvNumber('MIN_PROFIT_USDC', 0);
+  }
+  
+  // Fallback to deprecated MIN_PROFIT
+  if (process.env.MIN_PROFIT) {
+    if (!warnedDeprecations.has('MIN_PROFIT')) {
+      console.warn(
+        '⚠️  WARNING: MIN_PROFIT is deprecated. Please use MIN_PROFIT_USD instead.'
+      );
+      warnedDeprecations.add('MIN_PROFIT');
+    }
+    return getEnvNumber('MIN_PROFIT', 0);
+  }
+  
+  // No key set, return default
+  return 0;
+}
+
 // Flashloan asset type
 export type FlashloanAsset = 'SUI' | 'USDC';
 
@@ -65,9 +103,19 @@ export const config = {
   liveConfirm: getEnvBoolean('LIVE_CONFIRM', false),
 
   // Profit and Spread Thresholds
-  minProfitUsd: getEnvNumber('MIN_PROFIT', 0), // Minimum profit threshold in USD
+  minProfitUsd: getMinProfitUsd(), // Minimum profit threshold in USD (canonical: MIN_PROFIT_USD)
   minSpreadPercent: getEnvNumber('MIN_SPREAD_PERCENT', 0.5),
   consecutiveSpreadRequired: getEnvNumber('CONSECUTIVE_SPREAD_REQUIRED', 2),
+
+  // Telegram Configuration
+  enableTelegram: getEnvBoolean('ENABLE_TELEGRAM', false),
+  telegramBotToken: getEnvString('TELEGRAM_BOT_TOKEN', ''),
+  telegramChatId: getEnvString('TELEGRAM_CHAT_ID', ''),
+
+  // WebSocket Configuration
+  enableWs: getEnvBoolean('ENABLE_WS', false),
+  wsTriggerMode: getEnvString('WS_TRIGGER_MODE', 'object') as 'object' | 'event',
+  minSwapUsd: getEnvNumber('MIN_SWAP_USD', 0),
 
   // Risk Management
   maxSlippagePercent: getEnvNumber('MAX_SLIPPAGE_PERCENT', 1.0),

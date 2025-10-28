@@ -7,6 +7,7 @@ import { getCetusPriceByPool } from './cetusIntegration';
 import { executeFlashloanArb, ArbDirection } from './executor';
 import { COIN_TYPES } from './addresses';
 import { initializeTelegramNotifier, TelegramNotifier } from './notify/telegram';
+import { initializeWebSocketTriggers, WebSocketTriggerManager } from './ws/triggers';
 
 // State tracking
 let lastExecutionTime = 0;
@@ -18,6 +19,7 @@ let totalExecutions = 0;
 let successfulExecutions = 0;
 let consecutiveFailures = 0; // Kill switch counter
 let telegramNotifier: TelegramNotifier;
+let wsTriggerManager: WebSocketTriggerManager | null = null;
 
 /**
  * Calculate spread percentage between two prices
@@ -359,10 +361,31 @@ async function main() {
     logger.info(`  Strategy: Cetus fee-tier arbitrage`);
     logger.info(`  Flashloan asset: ${config.flashloanAsset}`);
     logger.info(`  Flashloan amount: ${config.flashloanAsset === 'SUI' ? smallestUnitToSui(BigInt(config.flashloanAmount)) + ' SUI' : smallestUnitToUsdc(BigInt(config.flashloanAmount)) + ' USDC'}`);
-    logger.info(`  Min profit: ${config.minProfitUsd} USDC`);
+    logger.info(`  Min profit: ${config.minProfitUsd} USD`);
     logger.info(`  Min spread: ${config.minSpreadPercent}%`);
     logger.info(`  Max slippage: ${config.maxSlippagePercent}%`);
     logger.info(`  Check interval: ${config.checkIntervalMs}ms`);
+    logger.info(`  Telegram: ${config.enableTelegram ? 'ENABLED' : 'DISABLED'}`);
+    logger.info(`  WebSocket triggers: ${config.enableWs ? `ENABLED (mode: ${config.wsTriggerMode})` : 'DISABLED'}`);
+
+    // Initialize WebSocket triggers if enabled
+    if (config.enableWs) {
+      const pools = getCetusPools();
+      const poolIds = [pools.pool005.poolId, pools.pool025.poolId];
+      
+      wsTriggerManager = await initializeWebSocketTriggers(
+        client,
+        poolIds,
+        async () => {
+          logger.info('WebSocket trigger detected - running immediate re-evaluation');
+          await feeTierMonitoringLoop();
+        }
+      );
+      
+      if (wsTriggerManager) {
+        logger.success('WebSocket triggers initialized successfully');
+      }
+    }
 
     // Start Cetus fee-tier monitoring loop
     logger.info(`Starting monitoring loop (Cetus Fee-Tier Arbitrage)...`);
@@ -379,6 +402,12 @@ async function main() {
     // Keep process alive
     process.on('SIGINT', async () => {
       logger.info('Received SIGINT, shutting down gracefully...');
+      
+      // Stop WebSocket triggers if active
+      if (wsTriggerManager) {
+        await wsTriggerManager.stop();
+      }
+      
       logger.info(
         `Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`
       );
@@ -387,6 +416,12 @@ async function main() {
 
     process.on('SIGTERM', async () => {
       logger.info('Received SIGTERM, shutting down gracefully...');
+      
+      // Stop WebSocket triggers if active
+      if (wsTriggerManager) {
+        await wsTriggerManager.stop();
+      }
+      
       logger.info(
         `Final stats: ${successfulExecutions}/${totalExecutions} successful, ${totalProfitUsdc.toFixed(6)} USDC profit`
       );
