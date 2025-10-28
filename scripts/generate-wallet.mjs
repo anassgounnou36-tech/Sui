@@ -31,8 +31,7 @@ async function generateWallet() {
       console.error('Please run: npm install');
       process.exit(1);
     }
-    // Re-throw other errors to ensure they aren't silently ignored
-    console.error('Unexpected error:', error.message);
+    // Re-throw other errors to be handled by the catch block below
     throw error;
   }
 }
