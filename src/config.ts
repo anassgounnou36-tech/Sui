@@ -229,8 +229,9 @@ export function validateConfig(): void {
   }
 
   // Validate WebSocket configuration
-  if (config.enableWs && config.wsTriggerMode === 'event') {
-    if (config.minSwapUsd < 0) {
+  if (config.enableWs) {
+    // MIN_SWAP_USD is only used in 'event' mode for filtering swap events
+    if (config.wsTriggerMode === 'event' && config.minSwapUsd < 0) {
       throw new Error('MIN_SWAP_USD cannot be negative');
     }
   }
