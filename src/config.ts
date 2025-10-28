@@ -14,6 +14,10 @@ function getEnvString(key: string, defaultValue?: string): string {
   return value;
 }
 
+function getEnvStringOptional(key: string, defaultValue: string = ''): string {
+  return process.env[key] || defaultValue;
+}
+
 function getEnvNumber(key: string, defaultValue: number): number {
   const value = process.env[key];
   if (!value) return defaultValue;
@@ -28,6 +32,57 @@ function getEnvBoolean(key: string, defaultValue: boolean): boolean {
   const value = process.env[key];
   if (!value) return defaultValue;
   return value.toLowerCase() === 'true';
+}
+
+// Warn-once tracker for deprecated environment variables
+const warnedDeprecations = new Set<string>();
+
+/**
+ * Get MIN_PROFIT_USD with fallback to deprecated keys and one-time warnings
+ */
+function getMinProfitUsd(): number {
+  // Try canonical key first
+  if (process.env.MIN_PROFIT_USD) {
+    return getEnvNumber('MIN_PROFIT_USD', 0);
+  }
+  
+  // Fallback to deprecated MIN_PROFIT_USDC
+  if (process.env.MIN_PROFIT_USDC) {
+    if (!warnedDeprecations.has('MIN_PROFIT_USDC')) {
+      console.warn(
+        '⚠️  WARNING: MIN_PROFIT_USDC is deprecated. Please use MIN_PROFIT_USD instead.'
+      );
+      warnedDeprecations.add('MIN_PROFIT_USDC');
+    }
+    return getEnvNumber('MIN_PROFIT_USDC', 0);
+  }
+  
+  // Fallback to deprecated MIN_PROFIT
+  if (process.env.MIN_PROFIT) {
+    if (!warnedDeprecations.has('MIN_PROFIT')) {
+      console.warn(
+        '⚠️  WARNING: MIN_PROFIT is deprecated. Please use MIN_PROFIT_USD instead.'
+      );
+      warnedDeprecations.add('MIN_PROFIT');
+    }
+    return getEnvNumber('MIN_PROFIT', 0);
+  }
+  
+  // No key set, return default
+  return 0;
+}
+
+/**
+ * Get WebSocket trigger mode with validation
+ */
+function getWsTriggerMode(): 'object' | 'event' {
+  const mode = getEnvStringOptional('WS_TRIGGER_MODE', 'object');
+  if (mode !== 'object' && mode !== 'event') {
+    throw new Error(
+      `Invalid WS_TRIGGER_MODE: ${mode}. Must be 'object' or 'event'`
+    );
+  }
+  return mode;
 }
 
 // Flashloan asset type
@@ -65,9 +120,19 @@ export const config = {
   liveConfirm: getEnvBoolean('LIVE_CONFIRM', false),
 
   // Profit and Spread Thresholds
-  minProfitUsd: getEnvNumber('MIN_PROFIT', 0), // Minimum profit threshold in USD
+  minProfitUsd: getMinProfitUsd(), // Minimum profit threshold in USD (canonical: MIN_PROFIT_USD)
   minSpreadPercent: getEnvNumber('MIN_SPREAD_PERCENT', 0.5),
   consecutiveSpreadRequired: getEnvNumber('CONSECUTIVE_SPREAD_REQUIRED', 2),
+
+  // Telegram Configuration
+  enableTelegram: getEnvBoolean('ENABLE_TELEGRAM', false),
+  telegramBotToken: getEnvStringOptional('TELEGRAM_BOT_TOKEN', ''),
+  telegramChatId: getEnvStringOptional('TELEGRAM_CHAT_ID', ''),
+
+  // WebSocket Configuration
+  enableWs: getEnvBoolean('ENABLE_WS', false),
+  wsTriggerMode: getWsTriggerMode(),
+  minSwapUsd: getEnvNumber('MIN_SWAP_USD', 0),
 
   // Risk Management
   maxSlippagePercent: getEnvNumber('MAX_SLIPPAGE_PERCENT', 1.0),
@@ -151,6 +216,24 @@ export function validateConfig(): void {
 
   if (config.minSpreadPercent < 0.1) {
     console.warn('Warning: MIN_SPREAD_PERCENT < 0.1% may result in unprofitable trades after fees');
+  }
+
+  // Validate Telegram configuration
+  if (config.enableTelegram) {
+    if (!config.telegramBotToken || !config.telegramChatId) {
+      console.warn(
+        '⚠️  WARNING: ENABLE_TELEGRAM is true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing. ' +
+        'Telegram notifications will be disabled.'
+      );
+    }
+  }
+
+  // Validate WebSocket configuration
+  if (config.enableWs) {
+    // MIN_SWAP_USD is only used in 'event' mode for filtering swap events
+    if (config.wsTriggerMode === 'event' && config.minSwapUsd < 0) {
+      throw new Error('MIN_SWAP_USD cannot be negative');
+    }
   }
 
   // Validate flashloan amount based on asset type

@@ -194,11 +194,17 @@ export class TelegramNotifier {
  * Initialize Telegram notifier from environment variables
  */
 export function initializeTelegramNotifier(): TelegramNotifier {
+  const enableTelegram = process.env.ENABLE_TELEGRAM?.toLowerCase() === 'true';
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
 
+  if (!enableTelegram) {
+    logger.info('Telegram notifications disabled (ENABLE_TELEGRAM=false)');
+    return new TelegramNotifier();
+  }
+
   if (!botToken || !chatId) {
-    logger.info('Telegram notifications disabled (missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID)');
+    logger.warn('Telegram enabled but missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID - notifications disabled');
     return new TelegramNotifier();
   }
 
