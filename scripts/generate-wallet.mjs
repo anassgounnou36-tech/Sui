@@ -22,8 +22,8 @@ async function generateWallet() {
     const address = keypair.toSuiAddress();
 
     // Output in .env-ready format
-    console.log('PRIVATE_KEY=' + privateKey);
-    console.log('WALLET_ADDRESS=' + address);
+    console.log(`PRIVATE_KEY=${privateKey}`);
+    console.log(`WALLET_ADDRESS=${address}`);
 
   } catch (error) {
     if (error.code === 'ERR_MODULE_NOT_FOUND') {
@@ -31,6 +31,8 @@ async function generateWallet() {
       console.error('Please run: npm install');
       process.exit(1);
     }
+    // Re-throw other errors to ensure they aren't silently ignored
+    console.error('Unexpected error:', error.message);
     throw error;
   }
 }
