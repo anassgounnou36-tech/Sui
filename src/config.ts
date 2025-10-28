@@ -14,6 +14,10 @@ function getEnvString(key: string, defaultValue?: string): string {
   return value;
 }
 
+function getEnvStringOptional(key: string, defaultValue: string = ''): string {
+  return process.env[key] || defaultValue;
+}
+
 function getEnvNumber(key: string, defaultValue: number): number {
   const value = process.env[key];
   if (!value) return defaultValue;
@@ -109,12 +113,12 @@ export const config = {
 
   // Telegram Configuration
   enableTelegram: getEnvBoolean('ENABLE_TELEGRAM', false),
-  telegramBotToken: getEnvString('TELEGRAM_BOT_TOKEN', ''),
-  telegramChatId: getEnvString('TELEGRAM_CHAT_ID', ''),
+  telegramBotToken: getEnvStringOptional('TELEGRAM_BOT_TOKEN', ''),
+  telegramChatId: getEnvStringOptional('TELEGRAM_CHAT_ID', ''),
 
   // WebSocket Configuration
   enableWs: getEnvBoolean('ENABLE_WS', false),
-  wsTriggerMode: getEnvString('WS_TRIGGER_MODE', 'object') as 'object' | 'event',
+  wsTriggerMode: getEnvStringOptional('WS_TRIGGER_MODE', 'object') as 'object' | 'event',
   minSwapUsd: getEnvNumber('MIN_SWAP_USD', 0),
 
   // Risk Management
