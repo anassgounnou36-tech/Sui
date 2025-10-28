@@ -110,7 +110,7 @@ async function validateArbOpportunity(
     const priceUsdcPerSui = await getCetusPriceByPool(pricePool);
     
     // Convert profit to USD
-    const expectedProfitSui = smallestUnitToSui(expectedProfit > BigInt(0) ? expectedProfit : BigInt(0));
+    const expectedProfitSui = Math.max(0, smallestUnitToSui(expectedProfit));
     const expectedProfitUsd = expectedProfitSui * priceUsdcPerSui;
 
     // Check if profit meets USD threshold

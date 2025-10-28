@@ -110,7 +110,7 @@ async function simulateArbitrage() {
     const priceUsdcPerSui = await getCetusPriceByPool(pricePool);
 
     // Calculate profit in USD
-    const estimatedProfitSui = smallestUnitToSui(estimatedProfit > BigInt(0) ? estimatedProfit : BigInt(0));
+    const estimatedProfitSui = Math.max(0, smallestUnitToSui(estimatedProfit));
     const estimatedProfitUsd = estimatedProfitSui * priceUsdcPerSui;
 
     console.log('=== Profitability Check ===');
